@@ -1,0 +1,4 @@
+*.swo
+*.swp
+prometheus-filter-proxy
+conf/
