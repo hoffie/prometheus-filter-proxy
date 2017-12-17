@@ -113,7 +113,7 @@
   branch = "master"
   name = "github.com/prometheus/procfs"
   packages = [".","xfs"]
-  revision = "a6e9df898b1336106c743392c48ee0b71f5c4efa"
+  revision = "f98634e408857669d61064b283c4cde240622865"
 
 [[projects]]
   name = "github.com/prometheus/prometheus"
@@ -155,7 +155,7 @@
   branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix","windows"]
-  revision = "1d2aa6dbdea45adaaebb9905d0666e4537563829"
+  revision = "571f7bbbe08da2a8955aed9d4db316e78630e9a3"
 
 [[projects]]
   name = "gopkg.in/alecthomas/kingpin.v2"
@@ -166,6 +166,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "cc7081aecaf830db1d10905a06914b728f4526ffac4de5daed9cf50339e062b4"
+  inputs-digest = "2f0bd4960426b215a759b0a4917b9a88c7ee206238c3501be299df26f038232a"
   solver-name = "gps-cdcl"
   solver-version = 1
