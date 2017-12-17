@@ -7,6 +7,9 @@ Instead of pointing Grafana to one Prometheus Data Source, you will create multi
 Each Data Source points to an individual prometheus-filter-proxy endpoint which rewrites all requests to be limited to the given label matcher.
 Example: `http://127.0.0.1:9090/owner=".*<somebody>.*"/`
 
+In order for this to make any sense, your Prometheus data has to be classified with a useful label (such as `owner` in the above case).
+Basically, this is an implementation of the idea of [Prometheus issue #1813](https://github.com/prometheus/prometheus/issues/1813).
+
 ## Status
 This project is considered feature-complete.
 It is recommended that long-term tests be run before putting this tool into production.
