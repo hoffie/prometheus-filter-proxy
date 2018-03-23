@@ -54,7 +54,7 @@ func (v *visitor) Visit(node promql.Node) (w promql.Visitor) {
 func addQueryFilter(filter, query string) (string, error) {
 	expr, err := promql.ParseExpr(query)
 	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Info("ParseExpr")
+		log.WithFields(log.Fields{"err": err}).Debug("ParseExpr")
 		return "", fmt.Errorf("promql parse error: %s", err)
 	}
 	log.Debug(promql.Tree(expr))
@@ -65,6 +65,6 @@ func addQueryFilter(filter, query string) (string, error) {
 	}
 	promql.Walk(v, expr)
 	newQuery := expr.String()
-	log.WithFields(log.Fields{"origQuery": query, "newQuery": newQuery}).Info("rewrote query")
+	log.WithFields(log.Fields{"origQuery": query, "newQuery": newQuery}).Debug("rewrote query")
 	return newQuery, nil
 }

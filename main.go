@@ -20,7 +20,7 @@ var (
 )
 
 func handleQuery(filter string, rw http.ResponseWriter, r *http.Request) {
-	log.WithFields(log.Fields{"method": r.Method, "path": r.URL.String(), "filter": filter}).Info("handling request")
+	log.WithFields(log.Fields{"method": r.Method, "path": r.URL.String(), "filter": filter}).Debug("handling request")
 	params := &url.Values{}
 	err := r.ParseForm()
 	if err != nil {
@@ -146,7 +146,7 @@ func main() {
 	} else {
 		log.SetLevel(log.InfoLevel)
 	}
-	log.WithFields(log.Fields{"upstream.addr": *upstream, "proxy.listen-addr": *listenAddr}).Info("Starting")
+	log.WithFields(log.Fields{"upstream.url": *upstream, "proxy.listen-addr": *listenAddr}).Info("Starting")
 	router := router{}
 	http.Handle("/", router)
 	log.Fatal(http.ListenAndServe(*listenAddr, nil))
