@@ -31,5 +31,5 @@ $ ./prometheus-filter-proxy --proxy.listen-addr 127.0.0.1:8888 --upstream.addr 1
 This software is released under the [Apache 2.0 license](LICENSE).
 
 ## Author
-sshified has been created by [Christian Hoffmann](https://hoffmann-christian.info/).
+prometheus-filter-proxy has been created by [Christian Hoffmann](https://hoffmann-christian.info/).
 If you find this project useful, please star it or drop me a short [mail](mailto:mail@hoffmann-christian.info).
