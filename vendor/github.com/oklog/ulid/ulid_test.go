@@ -18,9 +18,11 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"testing/quick"
 	"time"
 
@@ -29,7 +31,7 @@ import (
 
 func ExampleULID() {
 	t := time.Unix(1000000, 0)
-	entropy := rand.New(rand.NewSource(t.UnixNano()))
+	entropy := ulid.Monotonic(rand.New(rand.NewSource(t.UnixNano())), 0)
 	fmt.Println(ulid.MustNew(ulid.Timestamp(t), entropy))
 	// Output: 0000XSNJG0MQJHBF4QX1EFD6Y3
 }
@@ -76,13 +78,23 @@ func TestMustNew(t *testing.T) {
 func TestMustParse(t *testing.T) {
 	t.Parallel()
 
-	defer func() {
-		if got, want := recover(), ulid.ErrDataSize; got != want {
-			t.Errorf("got panic %v, want %v", got, want)
-		}
-	}()
+	for _, tc := range []struct {
+		name string
+		fn   func(string) ulid.ULID
+	}{
+		{"MustParse", ulid.MustParse},
+		{"MustParseStrict", ulid.MustParseStrict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if got, want := recover(), ulid.ErrDataSize; got != want {
+					t.Errorf("got panic %v, want %v", got, want)
+				}
+			}()
+			_ = tc.fn("")
+		})
 
-	_ = ulid.MustParse("")
+	}
 }
 
 func testULID(mk func(uint64, io.Reader) ulid.ULID) func(*testing.T) {
@@ -125,7 +137,8 @@ func TestRoundTrips(t *testing.T) {
 		}
 
 		return id == a && b == id &&
-			id == ulid.MustParse(id.String())
+			id == ulid.MustParse(id.String()) &&
+			id == ulid.MustParseStrict(id.String())
 	}
 
 	err := quick.Check(prop, &quick.Config{MaxCount: 1E5})
@@ -154,6 +167,36 @@ func TestMarshalingErrors(t *testing.T) {
 			}
 		})
 
+	}
+}
+
+func TestParseStrictInvalidCharacters(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name  string
+		input string
+	}
+	testCases := []testCase{}
+	base := "0000XSNJG0MQJHBF4QX1EFD6Y3"
+	for i := 0; i < ulid.EncodedSize; i++ {
+		testCases = append(testCases, testCase{
+			name:  fmt.Sprintf("Invalid 0xFF at index %d", i),
+			input: base[:i] + "\xff" + base[i+1:],
+		})
+		testCases = append(testCases, testCase{
+			name:  fmt.Sprintf("Invalid 0x00 at index %d", i),
+			input: base[:i] + "\x00" + base[i+1:],
+		})
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ulid.ParseStrict(tt.input)
+			if err != ulid.ErrInvalidCharacters {
+				t.Errorf("Parse(%q): got err %v, want %v", tt.input, err, ulid.ErrInvalidCharacters)
+			}
+		})
 	}
 }
 
@@ -258,6 +301,12 @@ func TestParseRobustness(t *testing.T) {
 			}
 		}()
 
+		// quick.Check doesn't constrain input,
+		// so we need to do so artificially.
+		if s[0] > '7' {
+			s[0] %= '7'
+		}
+
 		var err error
 		if _, err = ulid.Parse(string(s[:])); err != nil {
 			t.Error(err)
@@ -300,6 +349,31 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
+	t.Parallel()
+
+	original := time.Now()
+	diff := original.Sub(ulid.Time(ulid.Timestamp(original)))
+	if diff >= time.Millisecond {
+		t.Errorf("difference between original and recovered time (%d) greater"+
+			"than a millisecond", diff)
+	}
+
+}
+
+func TestTimestampRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	prop := func(ts uint64) bool {
+		return ts == ulid.Timestamp(ulid.Time(ts))
+	}
+
+	err := quick.Check(prop, &quick.Config{MaxCount: 1E5})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestULIDTime(t *testing.T) {
 	t.Parallel()
 
 	maxTime := ulid.MaxTime()
@@ -352,6 +426,31 @@ func TestEntropy(t *testing.T) {
 	}
 }
 
+func TestEntropyRead(t *testing.T) {
+	t.Parallel()
+
+	prop := func(e [10]byte) bool {
+		flakyReader := iotest.HalfReader(bytes.NewReader(e[:]))
+
+		id, err := ulid.New(ulid.Now(), flakyReader)
+		if err != nil {
+			t.Fatalf("got err %v", err)
+		}
+
+		got, want := id.Entropy(), e[:]
+		eq := bytes.Equal(got, want)
+		if !eq {
+			t.Errorf("\n(!= %v\n    %v)", got, want)
+		}
+
+		return eq
+	}
+
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1E4}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCompare(t *testing.T) {
 	t.Parallel()
 
@@ -369,63 +468,181 @@ func TestCompare(t *testing.T) {
 	}
 }
 
+func TestOverflowHandling(t *testing.T) {
+	for s, want := range map[string]error{
+		"00000000000000000000000000": nil,
+		"70000000000000000000000000": nil,
+		"7ZZZZZZZZZZZZZZZZZZZZZZZZZ": nil,
+		"80000000000000000000000000": ulid.ErrOverflow,
+		"80000000000000000000000001": ulid.ErrOverflow,
+		"ZZZZZZZZZZZZZZZZZZZZZZZZZZ": ulid.ErrOverflow,
+	} {
+		if _, have := ulid.Parse(s); want != have {
+			t.Errorf("%s: want error %v, have %v", s, want, have)
+		}
+	}
+}
+
+func TestScan(t *testing.T) {
+	id := ulid.MustNew(123, crand.Reader)
+
+	for _, tc := range []struct {
+		name string
+		in   interface{}
+		out  ulid.ULID
+		err  error
+	}{
+		{"string", id.String(), id, nil},
+		{"bytes", id[:], id, nil},
+		{"nil", nil, ulid.ULID{}, nil},
+		{"other", 44, ulid.ULID{}, ulid.ErrScanValue},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var out ulid.ULID
+			err := out.Scan(tc.in)
+			if got, want := out, tc.out; got.Compare(want) != 0 {
+				t.Errorf("got ULID %s, want %s", got, want)
+			}
+
+			if got, want := fmt.Sprint(err), fmt.Sprint(tc.err); got != want {
+				t.Errorf("got err %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestMonotonic(t *testing.T) {
+	now := ulid.Now()
+	for _, e := range []struct {
+		name string
+		mk   func() io.Reader
+	}{
+		{"cryptorand", func() io.Reader { return crand.Reader }},
+		{"mathrand", func() io.Reader { return rand.New(rand.NewSource(int64(now))) }},
+	} {
+		for _, inc := range []uint64{
+			0,
+			1,
+			2,
+			math.MaxUint8 + 1,
+			math.MaxUint16 + 1,
+			math.MaxUint32 + 1,
+		} {
+			inc := inc
+			entropy := ulid.Monotonic(e.mk(), uint64(inc))
+
+			t.Run(fmt.Sprintf("entropy=%s/inc=%d", e.name, inc), func(t *testing.T) {
+				t.Parallel()
+
+				var prev ulid.ULID
+				for i := 0; i < 10000; i++ {
+					next, err := ulid.New(123, entropy)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					if prev.Compare(next) >= 0 {
+						t.Fatalf("prev: %v %v > next: %v %v",
+							prev.Time(), prev.Entropy(), next.Time(), next.Entropy())
+					}
+
+					prev = next
+				}
+			})
+		}
+	}
+}
+
+func TestMonotonicOverflow(t *testing.T) {
+	t.Parallel()
+
+	entropy := ulid.Monotonic(
+		io.MultiReader(
+			bytes.NewReader(bytes.Repeat([]byte{0xFF}, 10)), // Entropy for first ULID
+			crand.Reader, // Following random entropy
+		),
+		0,
+	)
+
+	prev, err := ulid.New(0, entropy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := ulid.New(prev.Time(), entropy)
+	if have, want := err, ulid.ErrMonotonicOverflow; have != want {
+		t.Errorf("have ulid: %v %v err: %v, want err: %v",
+			next.Time(), next.Entropy(), have, want)
+	}
+}
+
 func BenchmarkNew(b *testing.B) {
-	b.Run("WithCryptoEntropy", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = ulid.New(123, crand.Reader)
-		}
-	})
-
-	b.Run("WithEntropy", func(b *testing.B) {
-		now := time.Now().UTC()
-		entropy := rand.New(rand.NewSource(now.UnixNano()))
-		b.ResetTimer()
-
-		for i := 0; i < b.N; i++ {
-			_, _ = ulid.New(123, entropy)
-		}
-	})
-
-	b.Run("WithoutEntropy", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = ulid.New(123, nil)
-		}
+	benchmarkMakeULID(b, func(timestamp uint64, entropy io.Reader) {
+		_, _ = ulid.New(timestamp, entropy)
 	})
 }
 
 func BenchmarkMustNew(b *testing.B) {
-	b.Run("WithCryptoEntropy", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = ulid.MustNew(123, crand.Reader)
-		}
+	benchmarkMakeULID(b, func(timestamp uint64, entropy io.Reader) {
+		_ = ulid.MustNew(timestamp, entropy)
 	})
+}
 
-	b.Run("WithEntropy", func(b *testing.B) {
-		now := time.Now().UTC()
-		entropy := rand.New(rand.NewSource(now.UnixNano()))
-		b.ResetTimer()
+func benchmarkMakeULID(b *testing.B, f func(uint64, io.Reader)) {
+	b.ReportAllocs()
+	b.SetBytes(int64(len(ulid.ULID{})))
 
-		for i := 0; i < b.N; i++ {
-			_ = ulid.MustNew(123, entropy)
-		}
-	})
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	b.Run("WithoutEntropy", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = ulid.MustNew(123, nil)
-		}
-	})
+	for _, tc := range []struct {
+		name       string
+		timestamps []uint64
+		entropy    io.Reader
+	}{
+		{"WithCrypoEntropy", []uint64{123}, crand.Reader},
+		{"WithEntropy", []uint64{123}, rng},
+		{"WithMonotonicEntropy_SameTimestamp_Inc0", []uint64{123}, ulid.Monotonic(rng, 0)},
+		{"WithMonotonicEntropy_DifferentTimestamp_Inc0", []uint64{122, 123}, ulid.Monotonic(rng, 0)},
+		{"WithMonotonicEntropy_SameTimestamp_Inc1", []uint64{123}, ulid.Monotonic(rng, 1)},
+		{"WithMonotonicEntropy_DifferentTimestamp_Inc1", []uint64{122, 123}, ulid.Monotonic(rng, 1)},
+		{"WithCryptoMonotonicEntropy_SameTimestamp_Inc1", []uint64{123}, ulid.Monotonic(crand.Reader, 1)},
+		{"WithCryptoMonotonicEntropy_DifferentTimestamp_Inc1", []uint64{122, 123}, ulid.Monotonic(crand.Reader, 1)},
+		{"WithoutEntropy", []uint64{123}, nil},
+	} {
+		tc := tc
+		b.Run(tc.name, func(b *testing.B) {
+			b.StopTimer()
+			b.ResetTimer()
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				f(tc.timestamps[i%len(tc.timestamps)], tc.entropy)
+			}
+		})
+	}
 }
 
 func BenchmarkParse(b *testing.B) {
 	const s = "0000XSNJG0MQJHBF4QX1EFD6Y3"
+	b.SetBytes(int64(len(s)))
 	for i := 0; i < b.N; i++ {
 		_, _ = ulid.Parse(s)
 	}
 }
 
+func BenchmarkParseStrict(b *testing.B) {
+	const s = "0000XSNJG0MQJHBF4QX1EFD6Y3"
+	b.SetBytes(int64(len(s)))
+	for i := 0; i < b.N; i++ {
+		_, _ = ulid.ParseStrict(s)
+	}
+}
+
 func BenchmarkMustParse(b *testing.B) {
 	const s = "0000XSNJG0MQJHBF4QX1EFD6Y3"
+	b.SetBytes(int64(len(s)))
 	for i := 0; i < b.N; i++ {
 		_ = ulid.MustParse(s)
 	}
@@ -434,6 +651,7 @@ func BenchmarkMustParse(b *testing.B) {
 func BenchmarkString(b *testing.B) {
 	entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
 	id := ulid.MustNew(123456, entropy)
+	b.SetBytes(int64(len(id)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = id.String()
@@ -446,24 +664,32 @@ func BenchmarkMarshal(b *testing.B) {
 	id := ulid.MustNew(123456, entropy)
 
 	b.Run("Text", func(b *testing.B) {
+		b.SetBytes(int64(len(id)))
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, _ = id.MarshalText()
 		}
 	})
 
 	b.Run("TextTo", func(b *testing.B) {
+		b.SetBytes(int64(len(id)))
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = id.MarshalTextTo(buf)
 		}
 	})
 
 	b.Run("Binary", func(b *testing.B) {
+		b.SetBytes(int64(len(id)))
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, _ = id.MarshalBinary()
 		}
 	})
 
 	b.Run("BinaryTo", func(b *testing.B) {
+		b.SetBytes(int64(len(id)))
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = id.MarshalBinaryTo(buf)
 		}
@@ -477,12 +703,16 @@ func BenchmarkUnmarshal(b *testing.B) {
 	bin, _ := ulid.MustParse(s).MarshalBinary()
 
 	b.Run("Text", func(b *testing.B) {
+		b.SetBytes(int64(len(txt)))
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = id.UnmarshalText(txt)
 		}
 	})
 
 	b.Run("Binary", func(b *testing.B) {
+		b.SetBytes(int64(len(bin)))
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = id.UnmarshalBinary(bin)
 		}
@@ -490,6 +720,8 @@ func BenchmarkUnmarshal(b *testing.B) {
 }
 
 func BenchmarkNow(b *testing.B) {
+	b.SetBytes(8)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = ulid.Now()
 	}
@@ -497,6 +729,7 @@ func BenchmarkNow(b *testing.B) {
 
 func BenchmarkTimestamp(b *testing.B) {
 	now := time.Now()
+	b.SetBytes(8)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = ulid.Timestamp(now)
@@ -505,6 +738,7 @@ func BenchmarkTimestamp(b *testing.B) {
 
 func BenchmarkTime(b *testing.B) {
 	id := ulid.MustNew(123456789, nil)
+	b.SetBytes(8)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = id.Time()
@@ -513,6 +747,8 @@ func BenchmarkTime(b *testing.B) {
 
 func BenchmarkSetTime(b *testing.B) {
 	var id ulid.ULID
+	b.SetBytes(8)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = id.SetTime(123456789)
 	}
@@ -520,6 +756,7 @@ func BenchmarkSetTime(b *testing.B) {
 
 func BenchmarkEntropy(b *testing.B) {
 	id := ulid.MustNew(0, strings.NewReader("ABCDEFGHIJKLMNOP"))
+	b.SetBytes(10)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = id.Entropy()
@@ -529,7 +766,18 @@ func BenchmarkEntropy(b *testing.B) {
 func BenchmarkSetEntropy(b *testing.B) {
 	var id ulid.ULID
 	e := []byte("ABCDEFGHIJKLMNOP")
+	b.SetBytes(10)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = id.SetEntropy(e)
+	}
+}
+
+func BenchmarkCompare(b *testing.B) {
+	id, other := ulid.MustNew(12345, nil), ulid.MustNew(54321, nil)
+	b.SetBytes(int64(len(id) * 2))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = id.Compare(other)
 	}
 }

@@ -20,37 +20,183 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
+	"github.com/prometheus/client_golang/prometheus"
+	config_util "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promlog"
 	"github.com/prometheus/common/route"
+	tsdbLabels "github.com/prometheus/tsdb/labels"
 
 	"github.com/prometheus/prometheus/config"
+	"github.com/prometheus/prometheus/pkg/gate"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
-	"github.com/prometheus/prometheus/retrieval"
+	"github.com/prometheus/prometheus/rules"
+	"github.com/prometheus/prometheus/scrape"
+	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
+	"github.com/prometheus/prometheus/util/testutil"
 )
 
-type targetRetrieverFunc func() []*retrieval.Target
+type testTargetRetriever struct{}
 
-func (f targetRetrieverFunc) Targets() []*retrieval.Target {
-	return f()
+func (t testTargetRetriever) TargetsActive() map[string][]*scrape.Target {
+	return map[string][]*scrape.Target{
+		"test": {
+			scrape.NewTarget(
+				labels.FromMap(map[string]string{
+					model.SchemeLabel:      "http",
+					model.AddressLabel:     "example.com:8080",
+					model.MetricsPathLabel: "/metrics",
+					model.JobLabel:         "test",
+				}),
+				nil,
+				url.Values{},
+			),
+		},
+		"blackbox": {
+			scrape.NewTarget(
+				labels.FromMap(map[string]string{
+					model.SchemeLabel:      "http",
+					model.AddressLabel:     "localhost:9115",
+					model.MetricsPathLabel: "/probe",
+					model.JobLabel:         "blackbox",
+				}),
+				nil,
+				url.Values{"target": []string{"example.com"}},
+			),
+		},
+	}
+}
+func (t testTargetRetriever) TargetsDropped() map[string][]*scrape.Target {
+	return map[string][]*scrape.Target{
+		"blackbox": {
+			scrape.NewTarget(
+				nil,
+				labels.FromMap(map[string]string{
+					model.AddressLabel:     "http://dropped.example.com:9115",
+					model.MetricsPathLabel: "/probe",
+					model.SchemeLabel:      "http",
+					model.JobLabel:         "blackbox",
+				}),
+				url.Values{},
+			),
+		},
+	}
 }
 
-type alertmanagerRetrieverFunc func() []*url.URL
+type testAlertmanagerRetriever struct{}
 
-func (f alertmanagerRetrieverFunc) Alertmanagers() []*url.URL {
-	return f()
+func (t testAlertmanagerRetriever) Alertmanagers() []*url.URL {
+	return []*url.URL{
+		{
+			Scheme: "http",
+			Host:   "alertmanager.example.com:8080",
+			Path:   "/api/v1/alerts",
+		},
+	}
+}
+
+func (t testAlertmanagerRetriever) DroppedAlertmanagers() []*url.URL {
+	return []*url.URL{
+		{
+			Scheme: "http",
+			Host:   "dropped.alertmanager.example.com:8080",
+			Path:   "/api/v1/alerts",
+		},
+	}
+}
+
+type rulesRetrieverMock struct {
+	testing *testing.T
+}
+
+func (m rulesRetrieverMock) AlertingRules() []*rules.AlertingRule {
+	expr1, err := promql.ParseExpr(`absent(test_metric3) != 1`)
+	if err != nil {
+		m.testing.Fatalf("unable to parse alert expression: %s", err)
+	}
+	expr2, err := promql.ParseExpr(`up == 1`)
+	if err != nil {
+		m.testing.Fatalf("Unable to parse alert expression: %s", err)
+	}
+
+	rule1 := rules.NewAlertingRule(
+		"test_metric3",
+		expr1,
+		time.Second,
+		labels.Labels{},
+		labels.Labels{},
+		true,
+		log.NewNopLogger(),
+	)
+	rule2 := rules.NewAlertingRule(
+		"test_metric4",
+		expr2,
+		time.Second,
+		labels.Labels{},
+		labels.Labels{},
+		true,
+		log.NewNopLogger(),
+	)
+	var r []*rules.AlertingRule
+	r = append(r, rule1)
+	r = append(r, rule2)
+	return r
+}
+
+func (m rulesRetrieverMock) RuleGroups() []*rules.Group {
+	var ar rulesRetrieverMock
+	arules := ar.AlertingRules()
+	storage := testutil.NewStorage(m.testing)
+	defer storage.Close()
+
+	engineOpts := promql.EngineOpts{
+		Logger:        nil,
+		Reg:           nil,
+		MaxConcurrent: 10,
+		MaxSamples:    10,
+		Timeout:       100 * time.Second,
+	}
+
+	engine := promql.NewEngine(engineOpts)
+	opts := &rules.ManagerOptions{
+		QueryFunc:  rules.EngineQueryFunc(engine, storage),
+		Appendable: storage,
+		Context:    context.Background(),
+		Logger:     log.NewNopLogger(),
+	}
+
+	var r []rules.Rule
+
+	for _, alertrule := range arules {
+		r = append(r, alertrule)
+	}
+
+	recordingExpr, err := promql.ParseExpr(`vector(1)`)
+	if err != nil {
+		m.testing.Fatalf("unable to parse alert expression: %s", err)
+	}
+	recordingRule := rules.NewRecordingRule("recording-rule-1", recordingExpr, labels.Labels{})
+	r = append(r, recordingRule)
+
+	group := rules.NewGroup("grp", "/path/to/file", time.Second, r, false, opts)
+	return []*rules.Group{group}
 }
 
 var samplePrometheusCfg = config.Config{
@@ -60,6 +206,11 @@ var samplePrometheusCfg = config.Config{
 	ScrapeConfigs:      []*config.ScrapeConfig{},
 	RemoteWriteConfigs: []*config.RemoteWriteConfig{},
 	RemoteReadConfigs:  []*config.RemoteReadConfig{},
+}
+
+var sampleFlagMap = map[string]string{
+	"flag1": "value1",
+	"flag2": "value2",
 }
 
 func TestEndpoints(t *testing.T) {
@@ -80,47 +231,193 @@ func TestEndpoints(t *testing.T) {
 
 	now := time.Now()
 
-	tr := targetRetrieverFunc(func() []*retrieval.Target {
-		return []*retrieval.Target{
-			retrieval.NewTarget(
-				labels.FromMap(map[string]string{
-					model.SchemeLabel:      "http",
-					model.AddressLabel:     "example.com:8080",
-					model.MetricsPathLabel: "/metrics",
-				}),
-				nil,
-				url.Values{},
-			),
+	var algr rulesRetrieverMock
+	algr.testing = t
+	algr.AlertingRules()
+	algr.RuleGroups()
+
+	t.Run("local", func(t *testing.T) {
+		var algr rulesRetrieverMock
+		algr.testing = t
+
+		algr.AlertingRules()
+
+		algr.RuleGroups()
+
+		api := &API{
+			Queryable:             suite.Storage(),
+			QueryEngine:           suite.QueryEngine(),
+			targetRetriever:       testTargetRetriever{},
+			alertmanagerRetriever: testAlertmanagerRetriever{},
+			flagsMap:              sampleFlagMap,
+			now:                   func() time.Time { return now },
+			config:                func() config.Config { return samplePrometheusCfg },
+			ready:                 func(f http.HandlerFunc) http.HandlerFunc { return f },
+			rulesRetriever:        algr,
+		}
+
+		testEndpoints(t, api, true)
+	})
+
+	// Run all the API tests against a API that is wired to forward queries via
+	// the remote read client to a test server, which in turn sends them to the
+	// data from the test suite.
+	t.Run("remote", func(t *testing.T) {
+		server := setupRemote(suite.Storage())
+		defer server.Close()
+
+		u, err := url.Parse(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		al := promlog.AllowedLevel{}
+		al.Set("debug")
+		af := promlog.AllowedFormat{}
+		al.Set("logfmt")
+		promlogConfig := promlog.Config{
+			Level:  &al,
+			Format: &af,
+		}
+
+		dbDir, err := ioutil.TempDir("", "tsdb-api-ready")
+		testutil.Ok(t, err)
+		defer os.RemoveAll(dbDir)
+
+		testutil.Ok(t, err)
+		remote := remote.NewStorage(promlog.New(&promlogConfig), prometheus.DefaultRegisterer, func() (int64, error) {
+			return 0, nil
+		}, dbDir, 1*time.Second)
+
+		err = remote.ApplyConfig(&config.Config{
+			RemoteReadConfigs: []*config.RemoteReadConfig{
+				{
+					URL:           &config_util.URL{URL: u},
+					RemoteTimeout: model.Duration(1 * time.Second),
+					ReadRecent:    true,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var algr rulesRetrieverMock
+		algr.testing = t
+
+		algr.AlertingRules()
+
+		algr.RuleGroups()
+
+		api := &API{
+			Queryable:             remote,
+			QueryEngine:           suite.QueryEngine(),
+			targetRetriever:       testTargetRetriever{},
+			alertmanagerRetriever: testAlertmanagerRetriever{},
+			flagsMap:              sampleFlagMap,
+			now:                   func() time.Time { return now },
+			config:                func() config.Config { return samplePrometheusCfg },
+			ready:                 func(f http.HandlerFunc) http.HandlerFunc { return f },
+			rulesRetriever:        algr,
+		}
+
+		testEndpoints(t, api, false)
+	})
+
+}
+
+func TestLabelNames(t *testing.T) {
+	// TestEndpoints doesn't have enough label names to test api.labelNames
+	// endpoint properly. Hence we test it separately.
+	suite, err := promql.NewTest(t, `
+		load 1m
+			test_metric1{foo1="bar", baz="abc"} 0+100x100
+			test_metric1{foo2="boo"} 1+0x100
+			test_metric2{foo="boo"} 1+0x100
+			test_metric2{foo="boo", xyz="qwerty"} 1+0x100
+	`)
+	testutil.Ok(t, err)
+	defer suite.Close()
+	testutil.Ok(t, suite.Run())
+
+	api := &API{
+		Queryable: suite.Storage(),
+	}
+	request := func(m string) (*http.Request, error) {
+		if m == http.MethodPost {
+			r, err := http.NewRequest(m, "http://example.com", nil)
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			return r, err
+		}
+		return http.NewRequest(m, "http://example.com", nil)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		ctx := context.Background()
+		req, err := request(method)
+		testutil.Ok(t, err)
+		res := api.labelNames(req.WithContext(ctx))
+		assertAPIError(t, res.err, "")
+		assertAPIResponse(t, res.data, []string{"__name__", "baz", "foo", "foo1", "foo2", "xyz"})
+	}
+}
+
+func setupRemote(s storage.Storage) *httptest.Server {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req, err := remote.DecodeReadRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := prompb.ReadResponse{
+			Results: make([]*prompb.QueryResult, len(req.Queries)),
+		}
+		for i, query := range req.Queries {
+			from, through, matchers, selectParams, err := remote.FromQuery(query)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			querier, err := s.Querier(r.Context(), from, through)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer querier.Close()
+
+			set, _, err := querier.Select(selectParams, matchers...)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			resp.Results[i], err = remote.ToQueryResult(set, 1e6)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if err := remote.EncodeReadResponse(&resp, w); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	})
 
-	ar := alertmanagerRetrieverFunc(func() []*url.URL {
-		return []*url.URL{{
-			Scheme: "http",
-			Host:   "alertmanager.example.com:8080",
-			Path:   "/api/v1/alerts",
-		}}
-	})
+	return httptest.NewServer(handler)
+}
 
-	api := &API{
-		Queryable:             suite.Storage(),
-		QueryEngine:           suite.QueryEngine(),
-		targetRetriever:       tr,
-		alertmanagerRetriever: ar,
-		now:    func() time.Time { return now },
-		config: func() config.Config { return samplePrometheusCfg },
-		ready:  func(f http.HandlerFunc) http.HandlerFunc { return f },
-	}
-
+func testEndpoints(t *testing.T, api *API, testLabelAPI bool) {
 	start := time.Unix(0, 0)
 
-	var tests = []struct {
+	type test struct {
 		endpoint apiFunc
 		params   map[string]string
 		query    url.Values
 		response interface{}
 		errType  errorType
-	}{
+	}
+
+	var tests = []test{
 		{
 			endpoint: api.query,
 			query: url.Values{
@@ -172,7 +469,7 @@ func TestEndpoints(t *testing.T) {
 				ResultType: promql.ValueTypeScalar,
 				Result: promql.Scalar{
 					V: 0.333,
-					T: timestamp.FromTime(now),
+					T: timestamp.FromTime(api.now()),
 				},
 			},
 		},
@@ -275,34 +572,6 @@ func TestEndpoints(t *testing.T) {
 				"start": []string{"148966367200.372"},
 				"end":   []string{"1489667272.372"},
 				"step":  []string{"1"},
-			},
-			errType: errorBadData,
-		},
-		{
-			endpoint: api.labelValues,
-			params: map[string]string{
-				"name": "__name__",
-			},
-			response: []string{
-				"test_metric1",
-				"test_metric2",
-			},
-		},
-		{
-			endpoint: api.labelValues,
-			params: map[string]string{
-				"name": "foo",
-			},
-			response: []string{
-				"bar",
-				"boo",
-			},
-		},
-		// Bad name parameter.
-		{
-			endpoint: api.labelValues,
-			params: map[string]string{
-				"name": "not!!!allowed",
 			},
 			errType: errorBadData,
 		},
@@ -425,9 +694,29 @@ func TestEndpoints(t *testing.T) {
 				ActiveTargets: []*Target{
 					{
 						DiscoveredLabels: map[string]string{},
-						Labels:           map[string]string{},
-						ScrapeURL:        "http://example.com:8080/metrics",
-						Health:           "unknown",
+						Labels: map[string]string{
+							"job": "blackbox",
+						},
+						ScrapeURL: "http://localhost:9115/probe?target=example.com",
+						Health:    "unknown",
+					},
+					{
+						DiscoveredLabels: map[string]string{},
+						Labels: map[string]string{
+							"job": "test",
+						},
+						ScrapeURL: "http://example.com:8080/metrics",
+						Health:    "unknown",
+					},
+				},
+				DroppedTargets: []*DroppedTarget{
+					{
+						DiscoveredLabels: map[string]string{
+							"__address__":      "http://dropped.example.com:9115",
+							"__metrics_path__": "/probe",
+							"__scheme__":       "http",
+							"job":              "blackbox",
+						},
 					},
 				},
 			},
@@ -440,6 +729,11 @@ func TestEndpoints(t *testing.T) {
 						URL: "http://alertmanager.example.com:8080/api/v1/alerts",
 					},
 				},
+				DroppedAlertmanagers: []*AlertmanagerTarget{
+					{
+						URL: "http://dropped.alertmanager.example.com:8080/api/v1/alerts",
+					},
+				},
 			},
 		},
 		{
@@ -448,36 +742,168 @@ func TestEndpoints(t *testing.T) {
 				YAML: samplePrometheusCfg.String(),
 			},
 		},
+		{
+			endpoint: api.serveFlags,
+			response: sampleFlagMap,
+		},
+		{
+			endpoint: api.alerts,
+			response: &AlertDiscovery{
+				Alerts: []*Alert{},
+			},
+		},
+		{
+			endpoint: api.rules,
+			response: &RuleDiscovery{
+				RuleGroups: []*RuleGroup{
+					{
+						Name:     "grp",
+						File:     "/path/to/file",
+						Interval: 1,
+						Rules: []rule{
+							alertingRule{
+								Name:        "test_metric3",
+								Query:       "absent(test_metric3) != 1",
+								Duration:    1,
+								Labels:      labels.Labels{},
+								Annotations: labels.Labels{},
+								Alerts:      []*Alert{},
+								Health:      "unknown",
+								Type:        "alerting",
+							},
+							alertingRule{
+								Name:        "test_metric4",
+								Query:       "up == 1",
+								Duration:    1,
+								Labels:      labels.Labels{},
+								Annotations: labels.Labels{},
+								Alerts:      []*Alert{},
+								Health:      "unknown",
+								Type:        "alerting",
+							},
+							recordingRule{
+								Name:   "recording-rule-1",
+								Query:  "vector(1)",
+								Labels: labels.Labels{},
+								Health: "unknown",
+								Type:   "recording",
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
-	for _, test := range tests {
-		// Build a context with the correct request params.
-		ctx := context.Background()
-		for p, v := range test.params {
-			ctx = route.WithParam(ctx, p, v)
-		}
-		t.Logf("run query %q", test.query.Encode())
+	if testLabelAPI {
+		tests = append(tests, []test{
+			{
+				endpoint: api.labelValues,
+				params: map[string]string{
+					"name": "__name__",
+				},
+				response: []string{
+					"test_metric1",
+					"test_metric2",
+				},
+			},
+			{
+				endpoint: api.labelValues,
+				params: map[string]string{
+					"name": "foo",
+				},
+				response: []string{
+					"bar",
+					"boo",
+				},
+			},
+			// Bad name parameter.
+			{
+				endpoint: api.labelValues,
+				params: map[string]string{
+					"name": "not!!!allowed",
+				},
+				errType: errorBadData,
+			},
+			// Label names.
+			{
+				endpoint: api.labelNames,
+				response: []string{"__name__", "foo"},
+			},
+		}...)
+	}
 
-		req, err := http.NewRequest("ANY", fmt.Sprintf("http://example.com?%s", test.query.Encode()), nil)
+	methods := func(f apiFunc) []string {
+		fp := reflect.ValueOf(f).Pointer()
+		if fp == reflect.ValueOf(api.query).Pointer() || fp == reflect.ValueOf(api.queryRange).Pointer() || fp == reflect.ValueOf(api.series).Pointer() {
+			return []string{http.MethodGet, http.MethodPost}
+		}
+		return []string{http.MethodGet}
+	}
+
+	request := func(m string, q url.Values) (*http.Request, error) {
+		if m == http.MethodPost {
+			r, err := http.NewRequest(m, "http://example.com", strings.NewReader(q.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			return r, err
+		}
+		return http.NewRequest(m, fmt.Sprintf("http://example.com?%s", q.Encode()), nil)
+	}
+
+	for i, test := range tests {
+		for _, method := range methods(test.endpoint) {
+			// Build a context with the correct request params.
+			ctx := context.Background()
+			for p, v := range test.params {
+				ctx = route.WithParam(ctx, p, v)
+			}
+			t.Logf("run %d\t%s\t%q", i, method, test.query.Encode())
+
+			req, err := request(method, test.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := test.endpoint(req.WithContext(ctx))
+			assertAPIError(t, res.err, test.errType)
+			assertAPIResponse(t, res.data, test.response)
+		}
+	}
+}
+
+func assertAPIError(t *testing.T, got *apiError, exp errorType) {
+	t.Helper()
+
+	if got != nil {
+		if exp == errorNone {
+			t.Fatalf("Unexpected error: %s", got)
+		}
+		if exp != got.typ {
+			t.Fatalf("Expected error of type %q but got type %q (%q)", exp, got.typ, got)
+		}
+		return
+	}
+	if got == nil && exp != errorNone {
+		t.Fatalf("Expected error of type %q but got none", exp)
+	}
+}
+
+func assertAPIResponse(t *testing.T, got interface{}, exp interface{}) {
+	if !reflect.DeepEqual(exp, got) {
+		respJSON, err := json.Marshal(got)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("failed to marshal response as JSON: %v", err.Error())
 		}
-		resp, apiErr := test.endpoint(req.WithContext(ctx))
-		if apiErr != nil {
-			if test.errType == errorNone {
-				t.Fatalf("Unexpected error: %s", apiErr)
-			}
-			if test.errType != apiErr.typ {
-				t.Fatalf("Expected error of type %q but got type %q", test.errType, apiErr.typ)
-			}
-			continue
+
+		expectedRespJSON, err := json.Marshal(exp)
+		if err != nil {
+			t.Fatalf("failed to marshal expected response as JSON: %v", err.Error())
 		}
-		if apiErr == nil && test.errType != errorNone {
-			t.Fatalf("Expected error of type %q but got none", test.errType)
-		}
-		if !reflect.DeepEqual(resp, test.response) {
-			t.Fatalf("Response does not match, expected:\n%+v\ngot:\n%+v", test.response, resp)
-		}
+
+		t.Fatalf(
+			"Response does not match, expected:\n%+v\ngot:\n%+v",
+			string(expectedRespJSON),
+			string(respJSON),
+		)
 	}
 }
 
@@ -501,14 +927,16 @@ func TestReadEndpoint(t *testing.T) {
 		config: func() config.Config {
 			return config.Config{
 				GlobalConfig: config.GlobalConfig{
-					ExternalLabels: model.LabelSet{
-						"baz": "a",
-						"b":   "c",
-						"d":   "e",
+					ExternalLabels: labels.Labels{
+						{Name: "baz", Value: "a"},
+						{Name: "b", Value: "c"},
+						{Name: "d", Value: "e"},
 					},
 				},
 			}
 		},
+		remoteReadSampleLimit: 1e6,
+		remoteReadGate:        gate.New(1),
 	}
 
 	// Encode the request.
@@ -520,7 +948,7 @@ func TestReadEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	query, err := remote.ToQuery(0, 1, []*labels.Matcher{matcher1, matcher2})
+	query, err := remote.ToQuery(0, 1, []*labels.Matcher{matcher1, matcher2}, &storage.SelectParams{Step: 0, Func: "avg"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,6 +964,10 @@ func TestReadEndpoint(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 	api.remoteRead(recorder, request)
+
+	if recorder.Code/100 != 2 {
+		t.Fatal(recorder.Code)
+	}
 
 	// Decode the response.
 	compressed, err = ioutil.ReadAll(recorder.Result().Body)
@@ -561,14 +993,14 @@ func TestReadEndpoint(t *testing.T) {
 	expected := &prompb.QueryResult{
 		Timeseries: []*prompb.TimeSeries{
 			{
-				Labels: []*prompb.Label{
+				Labels: []prompb.Label{
 					{Name: "__name__", Value: "test_metric1"},
 					{Name: "b", Value: "c"},
 					{Name: "baz", Value: "qux"},
 					{Name: "d", Value: "e"},
 					{Name: "foo", Value: "bar"},
 				},
-				Samples: []*prompb.Sample{{Value: 1, Timestamp: 0}},
+				Samples: []prompb.Sample{{Value: 1, Timestamp: 0}},
 			},
 		},
 	}
@@ -577,9 +1009,215 @@ func TestReadEndpoint(t *testing.T) {
 	}
 }
 
+type fakeDB struct {
+	err    error
+	closer func()
+}
+
+func (f *fakeDB) CleanTombstones() error                                  { return f.err }
+func (f *fakeDB) Delete(mint, maxt int64, ms ...tsdbLabels.Matcher) error { return f.err }
+func (f *fakeDB) Dir() string {
+	dir, _ := ioutil.TempDir("", "fakeDB")
+	f.closer = func() {
+		os.RemoveAll(dir)
+	}
+	return dir
+}
+func (f *fakeDB) Snapshot(dir string, withHead bool) error { return f.err }
+
+func TestAdminEndpoints(t *testing.T) {
+	tsdb, tsdbWithError := &fakeDB{}, &fakeDB{err: errors.New("some error")}
+	snapshotAPI := func(api *API) apiFunc { return api.snapshot }
+	cleanAPI := func(api *API) apiFunc { return api.cleanTombstones }
+	deleteAPI := func(api *API) apiFunc { return api.deleteSeries }
+
+	for i, tc := range []struct {
+		db          *fakeDB
+		enableAdmin bool
+		endpoint    func(api *API) apiFunc
+		method      string
+		values      url.Values
+
+		errType errorType
+	}{
+		// Tests for the snapshot endpoint.
+		{
+			db:          tsdb,
+			enableAdmin: false,
+			endpoint:    snapshotAPI,
+
+			errType: errorUnavailable,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    snapshotAPI,
+
+			errType: errorNone,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    snapshotAPI,
+			values:      map[string][]string{"skip_head": {"true"}},
+
+			errType: errorNone,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    snapshotAPI,
+			values:      map[string][]string{"skip_head": {"xxx"}},
+
+			errType: errorBadData,
+		},
+		{
+			db:          tsdbWithError,
+			enableAdmin: true,
+			endpoint:    snapshotAPI,
+
+			errType: errorInternal,
+		},
+		{
+			db:          nil,
+			enableAdmin: true,
+			endpoint:    snapshotAPI,
+
+			errType: errorUnavailable,
+		},
+		// Tests for the cleanTombstones endpoint.
+		{
+			db:          tsdb,
+			enableAdmin: false,
+			endpoint:    cleanAPI,
+
+			errType: errorUnavailable,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    cleanAPI,
+
+			errType: errorNone,
+		},
+		{
+			db:          tsdbWithError,
+			enableAdmin: true,
+			endpoint:    cleanAPI,
+
+			errType: errorInternal,
+		},
+		{
+			db:          nil,
+			enableAdmin: true,
+			endpoint:    cleanAPI,
+
+			errType: errorUnavailable,
+		},
+		// Tests for the deleteSeries endpoint.
+		{
+			db:          tsdb,
+			enableAdmin: false,
+			endpoint:    deleteAPI,
+
+			errType: errorUnavailable,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+
+			errType: errorBadData,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+			values:      map[string][]string{"match[]": {"123"}},
+
+			errType: errorBadData,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+			values:      map[string][]string{"match[]": {"up"}, "start": {"xxx"}},
+
+			errType: errorBadData,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+			values:      map[string][]string{"match[]": {"up"}, "end": {"xxx"}},
+
+			errType: errorBadData,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+			values:      map[string][]string{"match[]": {"up"}},
+
+			errType: errorNone,
+		},
+		{
+			db:          tsdb,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+			values:      map[string][]string{"match[]": {"up{job!=\"foo\"}", "{job=~\"bar.+\"}", "up{instance!~\"fred.+\"}"}},
+
+			errType: errorNone,
+		},
+		{
+			db:          tsdbWithError,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+			values:      map[string][]string{"match[]": {"up"}},
+
+			errType: errorInternal,
+		},
+		{
+			db:          nil,
+			enableAdmin: true,
+			endpoint:    deleteAPI,
+
+			errType: errorUnavailable,
+		},
+	} {
+		tc := tc
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			api := &API{
+				db: func() TSDBAdmin {
+					if tc.db != nil {
+						return tc.db
+					}
+					return nil
+				},
+				ready:       func(f http.HandlerFunc) http.HandlerFunc { return f },
+				enableAdmin: tc.enableAdmin,
+			}
+			defer func() {
+				if tc.db != nil && tc.db.closer != nil {
+					tc.db.closer()
+				}
+			}()
+
+			endpoint := tc.endpoint(api)
+			req, err := http.NewRequest(tc.method, fmt.Sprintf("?%s", tc.values.Encode()), nil)
+			if err != nil {
+				t.Fatalf("Error when creating test request: %s", err)
+			}
+			res := endpoint(req)
+			assertAPIError(t, res.err, tc.errType)
+		})
+	}
+}
+
 func TestRespondSuccess(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		respond(w, "test")
+		api := API{}
+		api.respond(w, "test", nil)
 	}))
 	defer s.Close()
 
@@ -616,7 +1254,8 @@ func TestRespondSuccess(t *testing.T) {
 
 func TestRespondError(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		respondError(w, &apiError{errorTimeout, errors.New("message")}, "test")
+		api := API{}
+		api.respondError(w, &apiError{errorTimeout, errors.New("message")}, "test")
 	}))
 	defer s.Close()
 
@@ -685,6 +1324,10 @@ func TestParseTime(t *testing.T) {
 		}, {
 			input:  "2015-06-03T14:21:58.555+01:00",
 			result: ts,
+		}, {
+			// Test float rounding.
+			input:  "1543578564.705",
+			result: time.Unix(1543578564, 705*1e6),
 		},
 	}
 
@@ -779,10 +1422,131 @@ func TestOptionsMethod(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("Expected status %d, got %d", http.StatusNoContent, resp.StatusCode)
 	}
+}
 
-	for h, v := range corsHeaders {
-		if resp.Header.Get(h) != v {
-			t.Fatalf("Expected %q for header %q, got %q", v, h, resp.Header.Get(h))
+func TestRespond(t *testing.T) {
+	cases := []struct {
+		response interface{}
+		expected string
+	}{
+		{
+			response: &queryData{
+				ResultType: promql.ValueTypeMatrix,
+				Result: promql.Matrix{
+					promql.Series{
+						Points: []promql.Point{{V: 1, T: 1000}},
+						Metric: labels.FromStrings("__name__", "foo"),
+					},
+				},
+			},
+			expected: `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"__name__":"foo"},"values":[[1,"1"]]}]}}`,
+		},
+		{
+			response: promql.Point{V: 0, T: 0},
+			expected: `{"status":"success","data":[0,"0"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 1},
+			expected: `{"status":"success","data":[0.001,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 10},
+			expected: `{"status":"success","data":[0.010,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 100},
+			expected: `{"status":"success","data":[0.100,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 1001},
+			expected: `{"status":"success","data":[1.001,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 1010},
+			expected: `{"status":"success","data":[1.010,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 1100},
+			expected: `{"status":"success","data":[1.100,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: 12345678123456555},
+			expected: `{"status":"success","data":[12345678123456.555,"20"]}`,
+		},
+		{
+			response: promql.Point{V: 20, T: -1},
+			expected: `{"status":"success","data":[-0.001,"20"]}`,
+		},
+		{
+			response: promql.Point{V: math.NaN(), T: 0},
+			expected: `{"status":"success","data":[0,"NaN"]}`,
+		},
+		{
+			response: promql.Point{V: math.Inf(1), T: 0},
+			expected: `{"status":"success","data":[0,"+Inf"]}`,
+		},
+		{
+			response: promql.Point{V: math.Inf(-1), T: 0},
+			expected: `{"status":"success","data":[0,"-Inf"]}`,
+		},
+		{
+			response: promql.Point{V: 1.2345678e6, T: 0},
+			expected: `{"status":"success","data":[0,"1234567.8"]}`,
+		},
+		{
+			response: promql.Point{V: 1.2345678e-6, T: 0},
+			expected: `{"status":"success","data":[0,"0.0000012345678"]}`,
+		},
+		{
+			response: promql.Point{V: 1.2345678e-67, T: 0},
+			expected: `{"status":"success","data":[0,"1.2345678e-67"]}`,
+		},
+	}
+
+	for _, c := range cases {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			api := API{}
+			api.respond(w, c.response, nil)
+		}))
+		defer s.Close()
+
+		resp, err := http.Get(s.URL)
+		if err != nil {
+			t.Fatalf("Error on test request: %s", err)
 		}
+		body, err := ioutil.ReadAll(resp.Body)
+		defer resp.Body.Close()
+		if err != nil {
+			t.Fatalf("Error reading response body: %s", err)
+		}
+
+		if string(body) != c.expected {
+			t.Fatalf("Expected response \n%v\n but got \n%v\n", c.expected, string(body))
+		}
+	}
+}
+
+// This is a global to avoid the benchmark being optimized away.
+var testResponseWriter = httptest.ResponseRecorder{}
+
+func BenchmarkRespond(b *testing.B) {
+	b.ReportAllocs()
+	points := []promql.Point{}
+	for i := 0; i < 10000; i++ {
+		points = append(points, promql.Point{V: float64(i * 1000000), T: int64(i)})
+	}
+	response := &queryData{
+		ResultType: promql.ValueTypeMatrix,
+		Result: promql.Matrix{
+			promql.Series{
+				Points: points,
+				Metric: nil,
+			},
+		},
+	}
+	b.ResetTimer()
+	api := API{}
+	for n := 0; n < b.N; n++ {
+		api.respond(&testResponseWriter, response, nil)
 	}
 }

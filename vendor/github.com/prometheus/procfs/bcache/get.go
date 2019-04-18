@@ -24,6 +24,31 @@ import (
 	"strings"
 )
 
+// ReadStats retrieves bcache runtime statistics for each bcache.
+func ReadStats(sysfs string) ([]*Stats, error) {
+	matches, err := filepath.Glob(path.Join(sysfs, "fs/bcache/*-*"))
+	if err != nil {
+		return nil, err
+	}
+
+	stats := make([]*Stats, 0, len(matches))
+	for _, uuidPath := range matches {
+		// "*-*" in glob above indicates the name of the bcache.
+		name := filepath.Base(uuidPath)
+
+		// stats
+		s, err := GetStats(uuidPath)
+		if err != nil {
+			return nil, err
+		}
+
+		s.Name = name
+		stats = append(stats, s)
+	}
+
+	return stats, nil
+}
+
 // ParsePseudoFloat parses the peculiar format produced by bcache's bch_hprint.
 func parsePseudoFloat(str string) (float64, error) {
 	ss := strings.Split(str, ".")
@@ -61,7 +86,7 @@ func dehumanize(hbytes []byte) (uint64, error) {
 	mul := float64(1)
 	var (
 		mant float64
-		err error
+		err  error
 	)
 	// If lastByte is beyond the range of ASCII digits, it must be a
 	// multiplier.
@@ -93,7 +118,7 @@ func dehumanize(hbytes []byte) (uint64, error) {
 			'Z': ZiB,
 			'Y': YiB,
 		}
-		mul = float64(multipliers[rune(lastByte)])
+		mul = multipliers[rune(lastByte)]
 		mant, err = parsePseudoFloat(string(hbytes))
 		if err != nil {
 			return 0, err
@@ -139,10 +164,10 @@ func (p *parser) readValue(fileName string) uint64 {
 }
 
 // ParsePriorityStats parses lines from the priority_stats file.
-func parsePriorityStats(line string, ps *PriorityStats) (error) {
+func parsePriorityStats(line string, ps *PriorityStats) error {
 	var (
 		value uint64
-		err error
+		err   error
 	)
 	switch {
 	case strings.HasPrefix(line, "Unused:"):

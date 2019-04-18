@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"math"
 	"net/http"
@@ -26,8 +25,8 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
-	"golang.org/x/net/context/ctxhttp"
 )
 
 const (
@@ -106,7 +105,12 @@ func (c *Client) Write(samples model.Samples) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	resp, err := ctxhttp.Post(ctx, http.DefaultClient, u.String(), contentTypeJSON, bytes.NewBuffer(buf))
+	req, err := http.NewRequest("POST", u.String(), bytes.NewBuffer(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentTypeJSON)
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -129,7 +133,7 @@ func (c *Client) Write(samples model.Samples) error {
 	if err := json.Unmarshal(buf, &r); err != nil {
 		return err
 	}
-	return fmt.Errorf("failed to write %d samples to OpenTSDB, %d succeeded", r["failed"], r["success"])
+	return errors.Errorf("failed to write %d samples to OpenTSDB, %d succeeded", r["failed"], r["success"])
 }
 
 // Name identifies the client as an OpenTSDB client.

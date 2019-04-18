@@ -1,3 +1,342 @@
+## 2.9.1 / 2019-04-16
+
+* [BUGFIX] Discovery/kubernetes: fix missing label sanitization #5462
+* [BUGFIX] Remote_write: Prevent reshard concurrent with calling stop #5460
+
+## 2.9.0 / 2019-04-15
+
+This releases uses Go 1.12, which includes a change in how memory is released
+to Linux. This will cause RSS to be reported as higher, however this is harmless
+and the memory is available to the kernel when it needs it.
+
+* [CHANGE/ENHANCEMENT] Update Consul to support catalog.ServiceMultipleTags. #5151
+* [FEATURE] Add honor_timestamps scrape option. #5304
+* [ENHANCEMENT] Discovery/kubernetes: add present labels for labels/annotations. #5443
+* [ENHANCEMENT] OpenStack SD: Add ProjectID and UserID meta labels. #5431
+* [ENHANCEMENT] Add GODEBUG and retention to the runtime page. #5324 #5322
+* [ENHANCEMENT] Add support for POSTing to /series endpoint. #5422
+* [ENHANCEMENT] Support PUT methods for Lifecycle and Admin APIs. #5376
+* [ENHANCEMENT] Scrape: Add global jitter for HA server. #5181
+* [ENHANCEMENT] Check for cancellation on every step of a range evaluation. #5131
+* [ENHANCEMENT] String interning for labels & values in the remote_write path. #5316
+* [ENHANCEMENT] Don't lose the scrape cache on a failed scrape. #5414
+* [ENHANCEMENT] Reload cert files from disk automatically. common#173
+* [ENHANCEMENT] Use fixed length millisecond timestamp format for logs. common#172
+* [ENHANCEMENT] Performance improvements for postings. tsdb#509 tsdb#572
+* [BUGFIX] Remote Write: fix checkpoint reading. #5429
+* [BUGFIX] Check if label value is valid when unmarshaling external labels from YAML. #5316
+* [BUGFIX] Promparse: sort all labels when parsing. #5372
+* [BUGFIX] Reload rules: copy state on both name and labels. #5368
+* [BUGFIX] Exponentation operator to drop metric name in result of operation. #5329
+* [BUGFIX] Config: resolve more file paths. #5284
+* [BUGFIX] Promtool: resolve relative paths in alert test files. #5336
+* [BUGFIX] Set TLSHandshakeTimeout in HTTP transport. common#179
+* [BUGFIX] Use fsync to be more resilient to machine crashes. tsdb#573 tsdb#578
+* [BUGFIX] Keep series that are still in WAL in checkpoints. tsdb#577
+* [BUGFIX] Fix output sample values for scalar-to-vector comparison operations. #5454
+
+## 2.8.1 / 2019-03-28
+
+* [BUGFIX] Display the job labels in `/targets` which was removed accidentally. #5406
+
+## 2.8.0 / 2019-03-12
+
+This release uses Write-Ahead Logging (WAL) for the remote_write API. This currently causes a slight increase in memory usage, which will be addressed in future releases.
+
+* [CHANGE] Default time retention is used only when no size based retention is specified. These are flags where time retention is specified by the flag `--storage.tsdb.retention` and size retention by `--storage.tsdb.retention.size`. #5216
+* [CHANGE] `prometheus_tsdb_storage_blocks_bytes_total` is now `prometheus_tsdb_storage_blocks_bytes`. prometheus/tsdb#506
+* [FEATURE] [EXPERIMENTAL] Time overlapping blocks are now allowed; vertical compaction and vertical query merge. It is an optional feature which is controlled by the `--storage.tsdb.allow-overlapping-blocks` flag, disabled by default. prometheus/tsdb#370
+* [ENHANCEMENT] Use the WAL for remote_write API. #4588
+* [ENHANCEMENT] Query performance improvements. prometheus/tsdb#531
+* [ENHANCEMENT] UI enhancements with upgrade to Bootstrap 4. #5226
+* [ENHANCEMENT] Reduce time that Alertmanagers are in flux when reloaded. #5126
+* [ENHANCEMENT] Limit number of metrics displayed on UI to 10000. #5139
+* [ENHANCEMENT] (1) Remember All/Unhealthy choice on target-overview when reloading page. (2) Resize text-input area on Graph page on mouseclick. #5201
+* [ENHANCEMENT] In `histogram_quantile` merge buckets with equivalent le values. #5158.
+* [ENHANCEMENT] Show list of offending labels in the error message in many-to-many scenarios. #5189
+* [ENHANCEMENT] Show `Storage Retention` criteria in effect on `/status` page. #5322
+* [BUGFIX] Fix sorting of rule groups. #5260
+* [BUGFIX] Fix support for password_file and bearer_token_file in Kubernetes SD. #5211
+* [BUGFIX] Scrape: catch errors when creating HTTP clients #5182. Adds new metrics:
+  * `prometheus_target_scrape_pools_total`
+  * `prometheus_target_scrape_pools_failed_total`
+  * `prometheus_target_scrape_pool_reloads_total`
+  * `prometheus_target_scrape_pool_reloads_failed_total`
+* [BUGFIX] Fix panic when aggregator param is not a literal. #5290
+
+## 2.7.2 / 2019-03-02
+
+* [BUGFIX] `prometheus_rule_group_last_evaluation_timestamp_seconds` is now a unix timestamp. #5186
+
+## 2.7.1 / 2019-01-31
+
+This release has a fix for a Stored DOM XSS vulnerability that can be triggered when using the query history functionality. Thanks to Dor Tumarkin from Checkmarx for reporting it.
+
+* [BUGFIX/SECURITY] Fix a Stored DOM XSS vulnerability with query history. #5163
+* [BUGFIX] `prometheus_rule_group_last_duration_seconds` now reports seconds instead of nanoseconds. #5153
+* [BUGFIX] Make sure the targets are consistently sorted in the targets page. #5161
+
+## 2.7.0 / 2019-01-28
+
+We're rolling back the Dockerfile changes introduced in 2.6.0. If you made changes to your docker deployment in 2.6.0, you will need to roll them back. This release also adds experimental support for disk size based retention. To accommodate that we are deprecating the flag `storage.tsdb.retention` in favour of `storage.tsdb.retention.time`. We print a warning if the flag is in use, but it will function without breaking until Prometheus 3.0.
+
+* [CHANGE] Rollback Dockerfile to version at 2.5.0. Rollback of the breaking change introduced in 2.6.0. #5122
+* [FEATURE] Add subqueries to PromQL. #4831
+* [FEATURE] [EXPERIMENTAL] Add support for disk size based retention. Note that we don't consider the WAL size which could be significant and the time based retention policy also applies. #5109 prometheus/tsdb#343
+* [FEATURE] Add CORS origin flag. #5011
+* [ENHANCEMENT] Consul SD: Add tagged address to the discovery metadata. #5001
+* [ENHANCEMENT] Kubernetes SD: Add service external IP and external name to the discovery metadata. #4940
+* [ENHANCEMENT] Azure SD: Add support for Managed Identity authentication. #4590
+* [ENHANCEMENT] Azure SD: Add tenant and subscription IDs to the discovery metadata. #4969
+* [ENHANCEMENT] OpenStack SD: Add support for application credentials based authentication. #4968
+* [ENHANCEMENT] Add metric for number of rule groups loaded. #5090
+* [BUGFIX] Avoid duplicate tests for alert unit tests. #4964
+* [BUGFIX] Don't depend on given order when comparing samples in alert unit testing. #5049
+* [BUGFIX] Make sure the retention period doesn't overflow. #5112
+* [BUGFIX] Make sure the blocks don't get very large. #5112
+* [BUGFIX] Don't generate blocks with no samples. prometheus/tsdb#374
+* [BUGFIX] Reintroduce metric for WAL corruptions. prometheus/tsdb#473
+
+## 2.6.1 / 2019-01-15
+
+* [BUGFIX] Azure SD: Fix discovery getting stuck sometimes. #5088
+* [BUGFIX] Marathon SD: Use `Tasks.Ports` when `RequirePorts` is `false`. #5026
+* [BUGFIX] Promtool: Fix "out-of-order sample" errors when testing rules. #5069
+
+## 2.6.0 / 2018-12-17
+
+* [CHANGE] Remove default flags from the container's entrypoint, run Prometheus from `/etc/prometheus` and symlink the storage directory to `/etc/prometheus/data`. #4976
+* [CHANGE] Promtool: Remove the `update` command. #3839
+* [FEATURE] Add JSON log format via the `--log.format` flag. #4876
+* [FEATURE] API: Add /api/v1/labels endpoint to get all label names. #4835
+* [FEATURE] Web: Allow setting the page's title via the `--web.ui-title` flag. #4841
+* [ENHANCEMENT] Add `prometheus_tsdb_lowest_timestamp_seconds`, `prometheus_tsdb_head_min_time_seconds` and `prometheus_tsdb_head_max_time_seconds` metrics. #4888
+* [ENHANCEMENT] Add `rule_group_last_evaluation_timestamp_seconds` metric. #4852
+* [ENHANCEMENT] Add `prometheus_template_text_expansion_failures_total` and `prometheus_template_text_expansions_total` metrics. #4747
+* [ENHANCEMENT] Set consistent User-Agent header in outgoing requests. #4891
+* [ENHANCEMENT] Azure SD: Error out at load time when authentication parameters are missing. #4907
+* [ENHANCEMENT] EC2 SD: Add the machine's private DNS name to the discovery metadata. #4693
+* [ENHANCEMENT] EC2 SD: Add the operating system's platform to the discovery metadata. #4663
+* [ENHANCEMENT] Kubernetes SD: Add the pod's phase to the discovery metadata. #4824
+* [ENHANCEMENT] Kubernetes SD: Log Kubernetes messages. #4931
+* [ENHANCEMENT] Promtool: Collect CPU and trace profiles. #4897
+* [ENHANCEMENT] Promtool: Support writing output as JSON. #4848
+* [ENHANCEMENT] Remote Read: Return available data if remote read fails partially. #4832
+* [ENHANCEMENT] Remote Write: Improve queue performance. #4772
+* [ENHANCEMENT] Remote Write: Add min_shards parameter to set the minimum number of shards. #4924
+* [ENHANCEMENT] TSDB: Improve WAL reading. #4953
+* [ENHANCEMENT] TSDB: Memory improvements. #4953
+* [ENHANCEMENT] Web: Log stack traces on panic. #4221
+* [ENHANCEMENT] Web UI: Add copy to clipboard button for configuration. #4410
+* [ENHANCEMENT] Web UI: Support console queries at specific times. #4764
+* [ENHANCEMENT] Web UI: group targets by job then instance. #4898 #4806
+* [BUGFIX] Deduplicate handler labels for HTTP metrics. #4732
+* [BUGFIX] Fix leaked queriers causing shutdowns to hang. #4922
+* [BUGFIX] Fix configuration loading panics on nil pointer slice elements. #4942
+* [BUGFIX] API: Correctly skip mismatching targets on /api/v1/targets/metadata. #4905
+* [BUGFIX] API: Better rounding for incoming query timestamps. #4941
+* [BUGFIX] Azure SD: Fix panic. #4867
+* [BUGFIX] Console templates: Fix hover when the metric has a null value. #4906
+* [BUGFIX] Discovery: Remove all targets when the scrape configuration gets empty. #4819
+* [BUGFIX] Marathon SD: Fix leaked connections. #4915
+* [BUGFIX] Marathon SD: Use 'hostPort' member of portMapping to construct target endpoints. #4887
+* [BUGFIX] PromQL: Fix a goroutine leak in the lexer/parser. #4858
+* [BUGFIX] Scrape: Pass through content-type for non-compressed output. #4912
+* [BUGFIX] Scrape: Fix deadlock in the scrape's manager. #4894
+* [BUGFIX] Scrape: Scrape targets at fixed intervals even after Prometheus restarts. #4926
+* [BUGFIX] TSDB: Support restored snapshots including the head properly. #4953
+* [BUGFIX] TSDB: Repair WAL when the last record in a segment is torn. #4953
+* [BUGFIX] TSDB: Fix unclosed file readers on Windows systems. #4997
+* [BUGFIX] Web: Avoid proxy to connect to the local gRPC server. #4572
+
+## 2.5.0 / 2018-11-06
+
+* [CHANGE] Group targets by scrape config instead of job name. #4806 #4526
+* [CHANGE] Marathon SD: Various changes to adapt to Marathon 1.5+. #4499
+* [CHANGE] Discovery: Split `prometheus_sd_discovered_targets` metric by scrape and notify (Alertmanager SD) as well as by section in the respective configuration. #4753
+* [FEATURE] Add OpenMetrics support for scraping (EXPERIMENTAL). #4700
+* [FEATURE] Add unit testing for rules. #4350
+* [FEATURE] Make maximum number of samples per query configurable via `--query.max-samples` flag. #4513
+* [FEATURE] Make maximum number of concurrent remote reads configurable via `--storage.remote.read-concurrent-limit` flag. #4656
+* [ENHANCEMENT] Support s390x platform for Linux. #4605
+* [ENHANCEMENT] API: Add `prometheus_api_remote_read_queries` metric tracking currently executed or waiting remote read API requests. #4699
+* [ENHANCEMENT] Remote Read: Add `prometheus_remote_storage_remote_read_queries` metric tracking currently in-flight remote read queries. #4677
+* [ENHANCEMENT] Remote Read: Reduced memory usage. #4655
+* [ENHANCEMENT] Discovery: Add `prometheus_sd_discovered_targets`, `prometheus_sd_received_updates_total`, `prometheus_sd_updates_delayed_total`, and `prometheus_sd_updates_total` metrics for discovery subsystem. #4667
+* [ENHANCEMENT] Discovery: Improve performance of previously slow updates of changes of targets. #4526
+* [ENHANCEMENT] Kubernetes SD: Add extended metrics. #4458
+* [ENHANCEMENT] OpenStack SD: Support discovering instances from all projects. #4682
+* [ENHANCEMENT] OpenStack SD: Discover all interfaces. #4649
+* [ENHANCEMENT] OpenStack SD: Support `tls_config` for the used HTTP client. #4654
+* [ENHANCEMENT] Triton SD: Add ability to filter triton_sd targets by pre-defined groups. #4701
+* [ENHANCEMENT] Web UI: Avoid browser spell-checking in expression field. #4728
+* [ENHANCEMENT] Web UI: Add scrape duration and last evaluation time in targets and rules pages. #4722
+* [ENHANCEMENT] Web UI: Improve rule view by wrapping lines. #4702
+* [ENHANCEMENT] Rules: Error out at load time for invalid templates, rather than at evaluation time. #4537
+* [ENHANCEMENT] TSDB: Add metrics for WAL operations. #4692
+* [BUGFIX] Change max/min over_time to handle NaNs properly. #4386
+* [BUGFIX] Check label name for `count_values` PromQL function. #4585
+* [BUGFIX] Ensure that vectors and matrices do not contain identical label-sets. #4589
+
+## 2.4.3 / 2018-10-04
+
+* [BUGFIX] Fix panic when using custom EC2 API for SD #4672
+* [BUGFIX] Fix panic when Zookeeper SD cannot connect to servers #4669
+* [BUGFIX] Make the skip_head an optional parameter for snapshot API #4674
+
+## 2.4.2 / 2018-09-21
+
+ The last release didn't have bugfix included due to a vendoring error.
+
+ * [BUGFIX] Handle WAL corruptions properly prometheus/tsdb#389
+ * [BUGFIX] Handle WAL migrations correctly on Windows prometheus/tsdb#392
+
+## 2.4.1 / 2018-09-19
+
+* [ENHANCEMENT] New TSDB metrics prometheus/tsdb#375 prometheus/tsdb#363
+* [BUGFIX] Render UI correctly for Windows #4616
+
+## 2.4.0 / 2018-09-11
+
+This release includes multiple bugfixes and features. Further, the WAL implementation has been re-written so the storage is not forward compatible. Prometheus 2.3 storage will work on 2.4 but not vice-versa.
+
+* [CHANGE] Reduce remote write default retries #4279
+* [CHANGE] Remove /heap endpoint #4460
+* [FEATURE] Persist alert 'for' state across restarts #4061
+* [FEATURE] Add API providing per target metric metadata #4183
+* [FEATURE] Add API providing recording and alerting rules #4318 #4501
+* [ENHANCEMENT] Brand new WAL implementation for TSDB. Forwards incompatible with previous WAL.
+* [ENHANCEMENT] Show rule evaluation errors in UI #4457
+* [ENHANCEMENT] Throttle resends of alerts to Alertmanager #4538
+* [ENHANCEMENT] Send EndsAt along with the alert to Alertmanager #4550
+* [ENHANCEMENT] Limit the samples returned by remote read endpoint #4532
+* [ENHANCEMENT] Limit the data read in through remote read #4239
+* [ENHANCEMENT] Coalesce identical SD configurations #3912
+* [ENHANCEMENT] `promtool`: Add new commands for debugging and querying #4247 #4308 #4346 #4454
+* [ENHANCEMENT] Update console examples for node_exporter v0.16.0 #4208
+* [ENHANCEMENT] Optimize PromQL aggregations #4248
+* [ENHANCEMENT] Remote read: Add Offset to hints #4226
+* [ENHANCEMENT] `consul_sd`: Add support for ServiceMeta field #4280
+* [ENHANCEMENT] `ec2_sd`: Maintain order of subnet_id label #4405
+* [ENHANCEMENT] `ec2_sd`: Add support for custom endpoint to support EC2 compliant APIs #4333
+* [ENHANCEMENT] `ec2_sd`: Add instance_owner label #4514
+* [ENHANCEMENT] `azure_sd`: Add support for VMSS discovery and multiple environments #4202 #4569
+* [ENHANCEMENT] `gce_sd`: Add instance_id label #4488
+* [ENHANCEMENT] Forbid rule-abiding robots from indexing #4266
+* [ENHANCEMENT] Log virtual memory limits on startup #4418
+* [BUGFIX] Wait for service discovery to stop before exiting #4508
+* [BUGFIX] Render SD configs properly #4338
+* [BUGFIX] Only add LookbackDelta to vector selectors #4399
+* [BUGFIX] `ec2_sd`: Handle panic-ing nil pointer #4469
+* [BUGFIX] `consul_sd`: Stop leaking connections #4443
+* [BUGFIX] Use templated labels also to identify alerts #4500
+* [BUGFIX] Reduce floating point errors in stddev and related functions #4533
+* [BUGFIX] Log errors while encoding responses #4359
+
+## 2.3.2 / 2018-07-12
+
+* [BUGFIX] Fix various tsdb bugs #4369
+* [BUGFIX] Reorder startup and shutdown to prevent panics. #4321
+* [BUGFIX] Exit with non-zero code on error #4296
+* [BUGFIX] discovery/kubernetes/ingress: fix scheme discovery #4329
+* [BUGFIX] Fix race in zookeeper sd #4355
+* [BUGFIX] Better timeout handling in promql #4291 #4300
+* [BUGFIX] Propagate errors when selecting series from the tsdb #4136
+
+## 2.3.1 / 2018-06-19
+
+* [BUGFIX] Avoid infinite loop on duplicate NaN values. #4275
+* [BUGFIX] Fix nil pointer deference when using various API endpoints #4282
+* [BUGFIX] config: set target group source index during unmarshaling #4245
+* [BUGFIX] discovery/file: fix logging #4178
+* [BUGFIX] kubernetes_sd: fix namespace filtering #4285
+* [BUGFIX] web: restore old path prefix behavior #4273
+* [BUGFIX] web: remove security headers added in 2.3.0 #4259
+
+## 2.3.0 / 2018-06-05
+
+* [CHANGE] `marathon_sd`: use `auth_token` and `auth_token_file` for token-based authentication instead of `bearer_token` and `bearer_token_file` respectively.
+* [CHANGE] Metric names for HTTP server metrics changed
+* [FEATURE] Add query commands to promtool
+* [FEATURE] Add security headers to HTTP server responses
+* [FEATURE] Pass query hints via remote read API
+* [FEATURE] Basic auth passwords can now be configured via file across all configuration
+* [ENHANCEMENT] Optimize PromQL and API serialization for memory usage and allocations
+* [ENHANCEMENT] Limit number of dropped targets in web UI
+* [ENHANCEMENT] Consul and EC2 service discovery allow using server-side filtering for performance improvement
+* [ENHANCEMENT] Add advanced filtering configuration to EC2 service discovery
+* [ENHANCEMENT] `marathon_sd`: adds support for basic and bearer authentication, plus all other common HTTP client options (TLS config, proxy URL, etc.)
+* [ENHANCEMENT] Provide machine type metadata and labels in GCE service discovery
+* [ENHANCEMENT] Add pod controller kind and name to Kubernetes service discovery data
+* [ENHANCEMENT] Move TSDB to flock-based log file that works with Docker containers
+* [BUGFIX] Properly propagate storage errors in PromQL
+* [BUGFIX] Fix path prefix for web pages
+* [BUGFIX] Fix goroutine leak in Consul service discovery
+* [BUGFIX] Fix races in scrape manager
+* [BUGFIX] Fix OOM for very large k in PromQL topk() queries
+* [BUGFIX] Make remote write more resilient to unavailable receivers
+* [BUGFIX] Make remote write shutdown cleanly
+* [BUGFIX] Don't leak files on errors in TSDB's tombstone cleanup
+* [BUGFIX] Unary minus expressions now removes the metric name from results
+* [BUGFIX] Fix bug that lead to wrong amount of samples considered for time range expressions
+
+## 2.2.1 / 2018-03-13
+
+* [BUGFIX] Fix data loss in TSDB on compaction
+* [BUGFIX] Correctly stop timer in remote-write path
+* [BUGFIX] Fix deadlock triggered by loading targets page
+* [BUGFIX] Fix incorrect buffering of samples on range selection queries
+* [BUGFIX] Handle large index files on windows properly
+
+## 2.2.0 / 2018-03-08
+
+* [CHANGE] Rename file SD mtime metric.
+* [CHANGE] Send target update on empty pod IP in Kubernetes SD.
+* [FEATURE] Add API endpoint for flags.
+* [FEATURE] Add API endpoint for dropped targets.
+* [FEATURE] Display annotations on alerts page.
+* [FEATURE] Add option to skip head data when taking snapshots.
+* [ENHANCEMENT] Federation performance improvement.
+* [ENHANCEMENT] Read bearer token file on every scrape.
+* [ENHANCEMENT] Improve typeahead on `/graph` page.
+* [ENHANCEMENT] Change rule file formatting.
+* [ENHANCEMENT] Set consul server default to `localhost:8500`.
+* [ENHANCEMENT] Add dropped Alertmanagers to API info endpoint.
+* [ENHANCEMENT] Add OS type meta label to Azure SD.
+* [ENHANCEMENT] Validate required fields in SD configuration.
+* [BUGFIX] Prevent stack overflow on deep recursion in TSDB.
+* [BUGFIX] Correctly read offsets in index files that are greater than 4GB.
+* [BUGFIX] Fix scraping behavior for empty labels.
+* [BUGFIX] Drop metric name for bool modifier.
+* [BUGFIX] Fix races in discovery.
+* [BUGFIX] Fix Kubernetes endpoints SD for empty subsets.
+* [BUGFIX] Throttle updates from SD providers, which caused increased CPU usage and allocations.
+* [BUGFIX] Fix TSDB block reload issue.
+* [BUGFIX] Fix PromQL printing of empty `without()`.
+* [BUGFIX] Don't reset FiredAt for inactive alerts.
+* [BUGFIX] Fix erroneous file version changes and repair existing data.
+
+## 2.1.0 / 2018-01-19
+
+* [FEATURE] New Service Discovery UI showing labels before and after relabelling.
+* [FEATURE] New Admin APIs added to v1 to delete, snapshot and remove tombstones.
+* [ENHANCEMENT] The graph UI autcomplete now includes your previous queries.
+* [ENHANCEMENT] Federation is now much faster for large numbers of series.
+* [ENHANCEMENT] Added new metrics to measure rule timings.
+* [ENHANCEMENT] Rule evaluation times added to the rules UI.
+* [ENHANCEMENT] Added metrics to measure modified time of file SD files.
+* [ENHANCEMENT] Kubernetes SD now includes POD UID in discovery metadata.
+* [ENHANCEMENT] The Query APIs now return optional stats on query execution times.
+* [ENHANCEMENT] The index now no longer has the 4GiB size limit and is also smaller.
+* [BUGFIX] Remote read `read_recent` option is now false by default.
+* [BUGFIX] Pass the right configuration to each Alertmanager (AM) when using multiple AM configs.
+* [BUGFIX] Fix not-matchers not selecting series with labels unset.
+* [BUGFIX] tsdb: Fix occasional panic in head block.
+* [BUGFIX] tsdb: Close files before deletion to fix retention issues on Windows and NFS.
+* [BUGFIX] tsdb: Cleanup and do not retry failing compactions.
+* [BUGFIX] tsdb: Close WAL while shutting down.
+
+
 ## 2.0.0 / 2017-11-08
 
 This release includes a completely rewritten storage, huge performance
@@ -13,7 +352,7 @@ https://prometheus.io/docs/prometheus/2.0/migration/
 * [CHANGE] Removed `count_scalar`, `drop_common_labels` functions and `keep_common` modifier from PromQL.
 * [CHANGE] Rewritten exposition format parser with much higher performance. The Protobuf exposition format is no longer supported.
 * [CHANGE] Example console templates updated for new storage and metrics names. Examples other than node exporter and Prometheus removed.
-* [CHANGE] Admin and lifecycle APIs now disabled by default, can be reenabled via flags
+* [CHANGE] Admin and lifecycle APIs now disabled by default, can be re-enabled via flags
 * [CHANGE] Flags switched to using Kingpin, all flags are now --flagname rather than -flagname.
 * [FEATURE/CHANGE] Remote read can be configured to not read data which is available locally. This is enabled by default.
 * [FEATURE] Rules can be grouped now. Rules within a rule group are executed sequentially.
@@ -338,7 +677,7 @@ This is a breaking change to the Kubernetes service discovery.
 * [ENHANCEMENT] Message on empty Alerts page.
 * [ENHANCEMENT] Various internal code refactorings and clean-ups.
 * [ENHANCEMENT] Various improvements in the build system.
-* [BUGFIX] Catch errors when unmarshalling delta/doubleDelta encoded chunks.
+* [BUGFIX] Catch errors when unmarshaling delta/doubleDelta encoded chunks.
 * [BUGFIX] Fix data race in lexer and lexer test.
 * [BUGFIX] Trim stray whitespace from bearer token file.
 * [BUGFIX] Avoid divide-by-zero panic on query_range?step=0.
@@ -868,9 +1207,9 @@ All changes:
 * [BUGFIX] Fixed special value handling in division and modulo of the query
   language.
 * [BUGFIX] Fix embed-static.sh.
-* [CLEANUP] Added intial HTTP API tests.
+* [CLEANUP] Added initial HTTP API tests.
 * [CLEANUP] Misc. other code cleanups.
-* [MAINTENANCE] Updated vendored dependcies to their newest versions.
+* [MAINTENANCE] Updated vendored dependencies to their newest versions.
 
 ## 0.12.0 / 2015-03-04
 * [CHANGE] Use client_golang v0.3.1. THIS CHANGES FINGERPRINTING AND INVALIDATES
@@ -930,7 +1269,7 @@ All changes:
   from embedding into the binary. Those files are only used for debugging,
   and then you can use -web.use-local-assets. By including fewer files, the
   RAM usage during compilation is much more manageable.
-* [ENHANCEMENT] Help link points to http://prometheus.github.io now.
+* [ENHANCEMENT] Help link points to https://prometheus.github.io now.
 * [FEATURE] Consoles for haproxy and cloudwatch.
 * [BUGFIX] Several fixes to graphs in consoles.
 * [CLEANUP] Removed a file size check that did not check anything.
@@ -1023,4 +1362,4 @@ All changes:
 * [BUGFIX] Built from Go 1.2.1, which has internal fixes to race conditions in garbage collection handling.
 * [ENHANCEMENT] Internal storage interface refactoring that allows building e.g. the `rule_checker` tool without LevelDB dynamic library dependencies.
 * [ENHANCEMENT] Cleanups around shutdown handling.
-* [PERFORMANCE] Preparations for better memory reuse during marshalling / unmarshalling.
+* [PERFORMANCE] Preparations for better memory reuse during marshaling / unmarshaling.

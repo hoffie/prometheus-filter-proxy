@@ -17,9 +17,10 @@ package prometheus;
 option go_package = "prompb";
 
 import "types.proto";
+import "gogoproto/gogo.proto";
 
 message WriteRequest {
-  repeated prometheus.TimeSeries timeseries = 1;
+  repeated prometheus.TimeSeries timeseries = 1 [(gogoproto.nullable) = false];
 }
 
 message ReadRequest {
@@ -35,8 +36,10 @@ message Query {
   int64 start_timestamp_ms = 1;
   int64 end_timestamp_ms = 2;
   repeated prometheus.LabelMatcher matchers = 3;
+  prometheus.ReadHints hints = 4;
 }
 
 message QueryResult {
+  // Samples within a time series must be ordered by time.
   repeated prometheus.TimeSeries timeseries = 1;
 }

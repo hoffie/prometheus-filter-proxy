@@ -14,12 +14,15 @@
 package labels
 
 import (
+	"bufio"
 	"bytes"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/cespare/xxhash"
+	"github.com/pkg/errors"
 )
 
 const sep = '\xff'
@@ -114,11 +117,13 @@ func New(ls ...Label) Labels {
 
 // FromMap returns new sorted Labels from the given map.
 func FromMap(m map[string]string) Labels {
-	l := make([]Label, 0, len(m))
+	l := make(Labels, 0, len(m))
 	for k, v := range m {
 		l = append(l, Label{Name: k, Value: v})
 	}
-	return New(l...)
+	sort.Sort(l)
+
+	return l
 }
 
 // FromStrings creates new labels from pairs of strings.
@@ -161,3 +166,49 @@ type Slice []Labels
 func (s Slice) Len() int           { return len(s) }
 func (s Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s Slice) Less(i, j int) bool { return Compare(s[i], s[j]) < 0 }
+
+// ReadLabels reads up to n label sets in a JSON formatted file fn. It is mostly useful
+// to load testing data.
+func ReadLabels(fn string, n int) ([]Labels, error) {
+	f, err := os.Open(fn)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+
+	var mets []Labels
+	hashes := map[uint64]struct{}{}
+	i := 0
+
+	for scanner.Scan() && i < n {
+		m := make(Labels, 0, 10)
+
+		r := strings.NewReplacer("\"", "", "{", "", "}", "")
+		s := r.Replace(scanner.Text())
+
+		labelChunks := strings.Split(s, ",")
+		for _, labelChunk := range labelChunks {
+			split := strings.Split(labelChunk, ":")
+			m = append(m, Label{Name: split[0], Value: split[1]})
+		}
+		// Order of the k/v labels matters, don't assume we'll always receive them already sorted.
+		sort.Sort(m)
+
+		h := m.Hash()
+		if _, ok := hashes[h]; ok {
+			continue
+		}
+		mets = append(mets, m)
+		hashes[h] = struct{}{}
+		i++
+	}
+	if err != nil {
+		return nil, err
+	}
+	if i != n {
+		return mets, errors.Errorf("requested %d metrics but found %d", n, i)
+	}
+	return mets, nil
+}

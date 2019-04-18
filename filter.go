@@ -29,9 +29,9 @@ func newVisitor(filter string) (*visitor, error) {
 	return v, nil
 }
 
-func (v *visitor) Visit(node promql.Node) (w promql.Visitor) {
+func (v *visitor) Visit(node promql.Node, path []promql.Node) (promql.Visitor, error) {
 	if node == nil {
-		return
+		return v, nil
 	}
 	log.WithFields(log.Fields{"node": node}).Debug("Visit")
 	switch n := node.(type) {
@@ -49,7 +49,7 @@ func (v *visitor) Visit(node promql.Node) (w promql.Visitor) {
 	default:
 		log.Warnf("Unknown type %T", n)
 	}
-	return v
+	return v, nil
 }
 
 func addQueryFilter(filter, query string) (string, error) {
@@ -64,7 +64,8 @@ func addQueryFilter(filter, query string) (string, error) {
 		log.WithFields(log.Fields{"err": err}).Warn("failed to create visitor")
 		return "", err
 	}
-	promql.Walk(v, expr)
+	var path []promql.Node
+	promql.Walk(v, expr, path)
 	newQuery := expr.String()
 	log.WithFields(log.Fields{"origQuery": query, "newQuery": newQuery}).Debug("rewrote query")
 	return newQuery, nil

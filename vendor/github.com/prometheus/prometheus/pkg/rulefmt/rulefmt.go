@@ -14,33 +14,34 @@
 package rulefmt
 
 import (
-	"fmt"
+	"context"
 	"io/ioutil"
-	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/promql"
 	yaml "gopkg.in/yaml.v2"
+
+	"github.com/prometheus/prometheus/pkg/timestamp"
+	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/template"
 )
 
 // Error represents semantical errors on parsing rule groups.
 type Error struct {
-	Group string
-	Rule  int
-	Err   error
+	Group    string
+	Rule     int
+	RuleName string
+	Err      error
 }
 
 func (err *Error) Error() string {
-	return errors.Wrapf(err.Err, "group %q, rule %d", err.Group, err.Rule).Error()
+	return errors.Wrapf(err.Err, "group %q, rule %d, %q", err.Group, err.Rule, err.RuleName).Error()
 }
 
 // RuleGroups is a set of rule groups that are typically exposed in a file.
 type RuleGroups struct {
 	Groups []RuleGroup `yaml:"groups"`
-
-	// Catches all undefined fields and must be empty after parsing.
-	XXX map[string]interface{} `yaml:",inline"`
 }
 
 // Validate validates all rules in the rule groups.
@@ -59,25 +60,24 @@ func (g *RuleGroups) Validate() (errs []error) {
 			)
 		}
 
-		if err := checkOverflow(g.XXX, "rule_group"); err != nil {
-			errs = append(errs, errors.Wrapf(err, "Group: %s", g.Name))
-		}
-
 		set[g.Name] = struct{}{}
 
 		for i, r := range g.Rules {
 			for _, err := range r.Validate() {
+				var ruleName string
+				if r.Alert != "" {
+					ruleName = r.Alert
+				} else {
+					ruleName = r.Record
+				}
 				errs = append(errs, &Error{
-					Group: g.Name,
-					Rule:  i,
-					Err:   err,
+					Group:    g.Name,
+					Rule:     i,
+					RuleName: ruleName,
+					Err:      err,
 				})
 			}
 		}
-	}
-
-	if err := checkOverflow(g.XXX, "config_file"); err != nil {
-		errs = append(errs, err)
 	}
 
 	return errs
@@ -88,9 +88,6 @@ type RuleGroup struct {
 	Name     string         `yaml:"name"`
 	Interval model.Duration `yaml:"interval,omitempty"`
 	Rules    []Rule         `yaml:"rules"`
-
-	// Catches all undefined fields and must be empty after parsing.
-	XXX map[string]interface{} `yaml:",inline"`
 }
 
 // Rule describes an alerting or recording rule.
@@ -101,9 +98,6 @@ type Rule struct {
 	For         model.Duration    `yaml:"for,omitempty"`
 	Labels      map[string]string `yaml:"labels,omitempty"`
 	Annotations map[string]string `yaml:"annotations,omitempty"`
-
-	// Catches all undefined fields and must be empty after parsing.
-	XXX map[string]interface{} `yaml:",inline"`
 }
 
 // Validate the rule and return a list of encountered errors.
@@ -148,33 +142,67 @@ func (r *Rule) Validate() (errs []error) {
 		}
 	}
 
-	if err := checkOverflow(r.XXX, "rule"); err != nil {
-		errs = append(errs, err)
+	errs = append(errs, testTemplateParsing(r)...)
+	return errs
+}
+
+// testTemplateParsing checks if the templates used in labels and annotations
+// of the alerting rules are parsed correctly.
+func testTemplateParsing(rl *Rule) (errs []error) {
+	if rl.Alert == "" {
+		// Not an alerting rule.
+		return errs
+	}
+
+	// Trying to parse templates.
+	tmplData := template.AlertTemplateData(make(map[string]string), 0)
+	defs := "{{$labels := .Labels}}{{$value := .Value}}"
+	parseTest := func(text string) error {
+		tmpl := template.NewTemplateExpander(
+			context.TODO(),
+			defs+text,
+			"__alert_"+rl.Alert,
+			tmplData,
+			model.Time(timestamp.FromTime(time.Now())),
+			nil,
+			nil,
+		)
+		return tmpl.ParseTest()
+	}
+
+	// Parsing Labels.
+	for _, val := range rl.Labels {
+		err := parseTest(val)
+		if err != nil {
+			errs = append(errs, errors.Errorf("msg=%s", err.Error()))
+		}
+	}
+
+	// Parsing Annotations.
+	for _, val := range rl.Annotations {
+		err := parseTest(val)
+		if err != nil {
+			errs = append(errs, errors.Errorf("msg=%s", err.Error()))
+		}
 	}
 
 	return errs
 }
 
-func checkOverflow(m map[string]interface{}, ctx string) error {
-	if len(m) > 0 {
-		var keys []string
-		for k := range m {
-			keys = append(keys, k)
-		}
-		return fmt.Errorf("unknown fields in %s: %s", ctx, strings.Join(keys, ", "))
+// Parse parses and validates a set of rules.
+func Parse(content []byte) (*RuleGroups, []error) {
+	var groups RuleGroups
+	if err := yaml.UnmarshalStrict(content, &groups); err != nil {
+		return nil, []error{err}
 	}
-	return nil
+	return &groups, groups.Validate()
 }
 
-// ParseFile parses the rule file and validates it.
+// ParseFile reads and parses rules from a file.
 func ParseFile(file string) (*RuleGroups, []error) {
 	b, err := ioutil.ReadFile(file)
 	if err != nil {
 		return nil, []error{err}
 	}
-	var groups RuleGroups
-	if err := yaml.Unmarshal(b, &groups); err != nil {
-		return nil, []error{err}
-	}
-	return &groups, groups.Validate()
+	return Parse(b)
 }

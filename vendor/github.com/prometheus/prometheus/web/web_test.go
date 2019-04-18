@@ -25,11 +25,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/config"
+	"github.com/prometheus/prometheus/notifier"
+	"github.com/prometheus/prometheus/rules"
+	"github.com/prometheus/prometheus/scrape"
 	"github.com/prometheus/prometheus/storage/tsdb"
 	"github.com/prometheus/prometheus/util/testutil"
 	libtsdb "github.com/prometheus/tsdb"
 )
 
+func TestMain(m *testing.M) {
+	// On linux with a global proxy the tests will fail as the go client(http,grpc) tries to connect through the proxy.
+	os.Setenv("no_proxy", "localhost,127.0.0.1,0.0.0.0,:")
+	os.Exit(m.Run())
+}
 func TestGlobalURL(t *testing.T) {
 	opts := &Options{
 		ListenAddress: ":9090",
@@ -96,19 +105,33 @@ func TestReadyAndHealthy(t *testing.T) {
 		Context:        nil,
 		Storage:        &tsdb.ReadyStorage{},
 		QueryEngine:    nil,
-		TargetManager:  nil,
-		RuleManager:    nil,
+		ScrapeManager:  &scrape.Manager{},
+		RuleManager:    &rules.Manager{},
 		Notifier:       nil,
 		RoutePrefix:    "/",
-		MetricsPath:    "/metrics/",
 		EnableAdminAPI: true,
 		TSDB:           func() *libtsdb.DB { return db },
+		ExternalURL: &url.URL{
+			Scheme: "http",
+			Host:   "localhost:9090",
+			Path:   "/",
+		},
+		Version: &PrometheusVersion{},
 	}
 
 	opts.Flags = map[string]string{}
 
 	webHandler := New(nil, opts)
-	go webHandler.Run(context.Background())
+
+	webHandler.config = &config.Config{}
+	webHandler.notifier = &notifier.Manager{}
+
+	go func() {
+		err := webHandler.Run(context.Background())
+		if err != nil {
+			panic(fmt.Sprintf("Can't start web handler:%s", err))
+		}
+	}()
 
 	// Give some time for the web goroutine to run since we need the server
 	// to be up before starting tests.
@@ -129,12 +152,57 @@ func TestReadyAndHealthy(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
 
+	resp, err = http.Get("http://localhost:9090/graph")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
 	resp, err = http.Post("http://localhost:9090/api/v2/admin/tsdb/snapshot", "", strings.NewReader(""))
 
 	testutil.Ok(t, err)
 	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
 
 	resp, err = http.Post("http://localhost:9090/api/v2/admin/tsdb/delete_series", "", strings.NewReader("{}"))
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/graph")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/alerts")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/flags")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/rules")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/service-discovery")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/targets")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/config")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/status")
 
 	testutil.Ok(t, err)
 	testutil.Equals(t, http.StatusServiceUnavailable, resp.StatusCode)
@@ -157,12 +225,52 @@ func TestReadyAndHealthy(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Equals(t, http.StatusOK, resp.StatusCode)
 
+	resp, err = http.Get("http://localhost:9090/graph")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
 	resp, err = http.Post("http://localhost:9090/api/v2/admin/tsdb/snapshot", "", strings.NewReader(""))
 
 	testutil.Ok(t, err)
 	testutil.Equals(t, http.StatusOK, resp.StatusCode)
 
 	resp, err = http.Post("http://localhost:9090/api/v2/admin/tsdb/delete_series", "", strings.NewReader("{}"))
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/alerts")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/flags")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/rules")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/service-discovery")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/targets")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/config")
+
+	testutil.Ok(t, err)
+	testutil.Equals(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get("http://localhost:9090/status")
 
 	testutil.Ok(t, err)
 	testutil.Equals(t, http.StatusOK, resp.StatusCode)
@@ -187,11 +295,10 @@ func TestRoutePrefix(t *testing.T) {
 		Context:        nil,
 		Storage:        &tsdb.ReadyStorage{},
 		QueryEngine:    nil,
-		TargetManager:  nil,
+		ScrapeManager:  nil,
 		RuleManager:    nil,
 		Notifier:       nil,
 		RoutePrefix:    "/prometheus",
-		MetricsPath:    "/prometheus/metrics",
 		EnableAdminAPI: true,
 		TSDB:           func() *libtsdb.DB { return db },
 	}
@@ -202,7 +309,7 @@ func TestRoutePrefix(t *testing.T) {
 	go func() {
 		err := webHandler.Run(context.Background())
 		if err != nil {
-			panic(fmt.Sprintf("Can't start webhandler error %s", err))
+			panic(fmt.Sprintf("Can't start web handler:%s", err))
 		}
 	}()
 
@@ -280,7 +387,6 @@ func TestDebugHandler(t *testing.T) {
 	} {
 		opts := &Options{
 			RoutePrefix: tc.prefix,
-			MetricsPath: "/metrics",
 		}
 		handler := New(nil, opts)
 		handler.Ready()

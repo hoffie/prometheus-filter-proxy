@@ -34,28 +34,12 @@ func tree(node Node, level string) string {
 	}
 	typs := strings.Split(fmt.Sprintf("%T", node), ".")[1]
 
-	var t string
-	// Only print the number of statements for readability.
-	if stmts, ok := node.(Statements); ok {
-		t = fmt.Sprintf("%s |---- %s :: %d\n", level, typs, len(stmts))
-	} else {
-		t = fmt.Sprintf("%s |---- %s :: %s\n", level, typs, node)
-	}
+	t := fmt.Sprintf("%s |---- %s :: %s\n", level, typs, node)
 
 	level += " · · ·"
 
 	switch n := node.(type) {
-	case Statements:
-		for _, s := range n {
-			t += tree(s, level)
-		}
-	case *AlertStmt:
-		t += tree(n.Expr, level)
-
 	case *EvalStmt:
-		t += tree(n.Expr, level)
-
-	case *RecordStmt:
 		t += tree(n.Expr, level)
 
 	case Expressions:
@@ -78,6 +62,9 @@ func tree(node Node, level string) string {
 	case *UnaryExpr:
 		t += tree(n.Expr, level)
 
+	case *SubqueryExpr:
+		t += tree(n.Expr, level)
+
 	case *MatrixSelector, *NumberLiteral, *StringLiteral, *VectorSelector:
 		// nothing to do
 
@@ -87,39 +74,8 @@ func tree(node Node, level string) string {
 	return t
 }
 
-func (stmts Statements) String() (s string) {
-	if len(stmts) == 0 {
-		return ""
-	}
-	for _, stmt := range stmts {
-		s += stmt.String()
-		s += "\n\n"
-	}
-	return s[:len(s)-2]
-}
-
-func (node *AlertStmt) String() string {
-	s := fmt.Sprintf("ALERT %s", node.Name)
-	s += fmt.Sprintf("\n\tIF %s", node.Expr)
-	if node.Duration > 0 {
-		s += fmt.Sprintf("\n\tFOR %s", model.Duration(node.Duration))
-	}
-	if len(node.Labels) > 0 {
-		s += fmt.Sprintf("\n\tLABELS %s", node.Labels)
-	}
-	if len(node.Annotations) > 0 {
-		s += fmt.Sprintf("\n\tANNOTATIONS %s", node.Annotations)
-	}
-	return s
-}
-
 func (node *EvalStmt) String() string {
 	return "EVAL " + node.Expr.String()
-}
-
-func (node *RecordStmt) String() string {
-	s := fmt.Sprintf("%s%s = %s", node.Name, node.Labels, node.Expr)
-	return s
 }
 
 func (es Expressions) String() (s string) {
@@ -134,43 +90,45 @@ func (es Expressions) String() (s string) {
 }
 
 func (node *AggregateExpr) String() string {
-	aggrString := fmt.Sprintf("%s(", node.Op)
+	aggrString := node.Op.String()
+
+	if node.Without {
+		aggrString += fmt.Sprintf(" without(%s) ", strings.Join(node.Grouping, ", "))
+	} else {
+		if len(node.Grouping) > 0 {
+			aggrString += fmt.Sprintf(" by(%s) ", strings.Join(node.Grouping, ", "))
+		}
+	}
+
+	aggrString += "("
 	if node.Op.isAggregatorWithParam() {
 		aggrString += fmt.Sprintf("%s, ", node.Param)
 	}
 	aggrString += fmt.Sprintf("%s)", node.Expr)
-	if len(node.Grouping) > 0 {
-		var format string
-		if node.Without {
-			format = "%s WITHOUT (%s)"
-		} else {
-			format = "%s BY (%s)"
-		}
-		aggrString = fmt.Sprintf(format, aggrString, strings.Join(node.Grouping, ", "))
-	}
+
 	return aggrString
 }
 
 func (node *BinaryExpr) String() string {
 	returnBool := ""
 	if node.ReturnBool {
-		returnBool = " BOOL"
+		returnBool = " bool"
 	}
 
 	matching := ""
 	vm := node.VectorMatching
 	if vm != nil && (len(vm.MatchingLabels) > 0 || vm.On) {
 		if vm.On {
-			matching = fmt.Sprintf(" ON(%s)", strings.Join(vm.MatchingLabels, ", "))
+			matching = fmt.Sprintf(" on(%s)", strings.Join(vm.MatchingLabels, ", "))
 		} else {
-			matching = fmt.Sprintf(" IGNORING(%s)", strings.Join(vm.MatchingLabels, ", "))
+			matching = fmt.Sprintf(" ignoring(%s)", strings.Join(vm.MatchingLabels, ", "))
 		}
 		if vm.Card == CardManyToOne || vm.Card == CardOneToMany {
-			matching += " GROUP_"
+			matching += " group_"
 			if vm.Card == CardManyToOne {
-				matching += "LEFT"
+				matching += "left"
 			} else {
-				matching += "RIGHT"
+				matching += "right"
 			}
 			matching += fmt.Sprintf("(%s)", strings.Join(vm.Include, ", "))
 		}
@@ -189,9 +147,17 @@ func (node *MatrixSelector) String() string {
 	}
 	offset := ""
 	if node.Offset != time.Duration(0) {
-		offset = fmt.Sprintf(" OFFSET %s", model.Duration(node.Offset))
+		offset = fmt.Sprintf(" offset %s", model.Duration(node.Offset))
 	}
 	return fmt.Sprintf("%s[%s]%s", vecSelector.String(), model.Duration(node.Range), offset)
+}
+
+func (node *SubqueryExpr) String() string {
+	step := ""
+	if node.Step != 0 {
+		step = model.Duration(node.Step).String()
+	}
+	return fmt.Sprintf("%s[%s:%s]", node.Expr.String(), model.Duration(node.Range), step)
 }
 
 func (node *NumberLiteral) String() string {
@@ -221,7 +187,7 @@ func (node *VectorSelector) String() string {
 	}
 	offset := ""
 	if node.Offset != time.Duration(0) {
-		offset = fmt.Sprintf(" OFFSET %s", model.Duration(node.Offset))
+		offset = fmt.Sprintf(" offset %s", model.Duration(node.Offset))
 	}
 
 	if len(labelStrings) == 0 {

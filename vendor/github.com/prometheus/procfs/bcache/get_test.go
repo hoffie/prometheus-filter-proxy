@@ -14,9 +14,51 @@
 package bcache
 
 import (
-	"testing"
 	"math"
+	"testing"
 )
+
+func TestFSBcacheStats(t *testing.T) {
+	stats, err := ReadStats("../fixtures/sys")
+	if err != nil {
+		t.Fatalf("failed to parse bcache stats: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		bdevs  int
+		caches int
+	}{
+		{
+			name:   "deaddd54-c735-46d5-868e-f331c5fd7c74",
+			bdevs:  1,
+			caches: 1,
+		},
+	}
+
+	const expect = 1
+
+	if l := len(stats); l != expect {
+		t.Fatalf("unexpected number of bcache stats: %d", l)
+	}
+	if l := len(tests); l != expect {
+		t.Fatalf("unexpected number of tests: %d", l)
+	}
+
+	for i, tt := range tests {
+		if want, got := tt.name, stats[i].Name; want != got {
+			t.Errorf("unexpected stats name:\nwant: %q\nhave: %q", want, got)
+		}
+
+		if want, got := tt.bdevs, len(stats[i].Bdevs); want != got {
+			t.Errorf("unexpected value allocated:\nwant: %d\nhave: %d", want, got)
+		}
+
+		if want, got := tt.caches, len(stats[i].Caches); want != got {
+			t.Errorf("unexpected value allocated:\nwant: %d\nhave: %d", want, got)
+		}
+	}
+}
 
 func TestDehumanizeTests(t *testing.T) {
 	dehumanizeTests := []struct {
@@ -45,8 +87,8 @@ func TestDehumanizeTests(t *testing.T) {
 			out: 2024,
 		},
 		{
-			in:  []byte(""),
-			out: 0,
+			in:      []byte(""),
+			out:     0,
 			invalid: true,
 		},
 	}
@@ -59,7 +101,7 @@ func TestDehumanizeTests(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 		if got != tst.out {
-			t.Errorf("dehumanize: '%s', want %f, got %f", tst.in, tst.out, got)
+			t.Errorf("dehumanize: '%s', want %d, got %d", tst.in, tst.out, got)
 		}
 	}
 }
@@ -84,7 +126,7 @@ func TestParsePseudoFloatTests(t *testing.T) {
 	}
 	for _, tst := range parsePseudoFloatTests {
 		got, err := parsePseudoFloat(tst.in)
-		if err != nil || math.Abs(got - tst.out) > 0.0001 {
+		if err != nil || math.Abs(got-tst.out) > 0.0001 {
 			t.Errorf("parsePseudoFloat: %s, want %f, got %f", tst.in, tst.out, got)
 		}
 	}
@@ -92,23 +134,23 @@ func TestParsePseudoFloatTests(t *testing.T) {
 
 func TestPriorityStats(t *testing.T) {
 	var want = PriorityStats{
-		UnusedPercent: 99,
+		UnusedPercent:   99,
 		MetadataPercent: 5,
 	}
 	var (
-		in string
+		in     string
 		gotErr error
-		got PriorityStats
+		got    PriorityStats
 	)
 	in = "Metadata:       5%"
 	gotErr = parsePriorityStats(in, &got)
 	if gotErr != nil || got.MetadataPercent != want.MetadataPercent {
-		t.Errorf("parsePriorityStats: '%s', want %f, got %f", in, want.MetadataPercent, got.MetadataPercent)
+		t.Errorf("parsePriorityStats: '%s', want %d, got %d", in, want.MetadataPercent, got.MetadataPercent)
 	}
 
 	in = "Unused:         99%"
 	gotErr = parsePriorityStats(in, &got)
 	if gotErr != nil || got.UnusedPercent != want.UnusedPercent {
-		t.Errorf("parsePriorityStats: '%s', want %f, got %f", in, want.UnusedPercent, got.UnusedPercent)
+		t.Errorf("parsePriorityStats: '%s', want %d, got %d", in, want.UnusedPercent, got.UnusedPercent)
 	}
 }

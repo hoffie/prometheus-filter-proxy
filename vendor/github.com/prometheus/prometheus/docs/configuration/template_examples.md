@@ -5,11 +5,11 @@ sort_rank: 4
 
 # Template examples
 
-Prometheus supports templating in the summary and description fields of
-alerts, as well as in served console pages. Templates have the ability to run
-queries against the local database, iterate over data, use conditionals, format
-data, etc. The Prometheus templating language is based on the
-[Go templating](http://golang.org/pkg/text/template/) system.
+Prometheus supports templating in the annotations and labels of alerts,
+as well as in served console pages. Templates have the ability to run
+queries against the local database, iterate over data, use conditionals,
+format data, etc. The Prometheus templating language is based on the [Go
+templating](https://golang.org/pkg/text/template/) system.
 
 ## Simple alert field templates
 
@@ -18,11 +18,10 @@ alert: InstanceDown
 expr: up == 0
 for: 5m
 labels:
-  - severity: page
-  
+  severity: page
 annotations:
-  - summary: "Instance {{$labels.instance}} down"
-  - description: "{{$labels.instance}} of job {{$labels.job}} has been down for more than 5 minutes."
+  summary: "Instance {{$labels.instance}} down"
+  description: "{{$labels.instance}} of job {{$labels.job}} has been down for more than 5 minutes."
 ```
 
 Alert field templates will be executed during every rule iteration for each

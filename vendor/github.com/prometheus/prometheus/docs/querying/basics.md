@@ -6,10 +6,11 @@ sort_rank: 1
 
 # Querying Prometheus
 
-Prometheus provides a functional expression language that lets the user select
-and aggregate time series data in real time. The result of an expression can
-either be shown as a graph, viewed as tabular data in Prometheus's expression
-browser, or consumed by external systems via the [HTTP API](api.md).
+Prometheus provides a functional query language called PromQL (Prometheus Query
+Language) that lets the user select and aggregate time series data in real
+time. The result of an expression can either be shown as a graph, viewed as
+tabular data in Prometheus's expression browser, or consumed by external
+systems via the [HTTP API](api.md).
 
 ## Examples
 
@@ -95,8 +96,9 @@ For example, this selects all `http_requests_total` time series for `staging`,
 
     http_requests_total{environment=~"staging|testing|development",method!="GET"}
 
-Label matchers that match empty label values also select all time series that do
-not have the specific label set at all. Regex-matches are fully anchored.
+Label matchers that match empty label values also select all time series that
+do not have the specific label set at all. Regex-matches are fully anchored. It
+is possible to have multiple matchers for the same label name.
 
 Vector selectors must either specify a name or at least one label matcher
 that does not match the empty string. The following expression is illegal:
@@ -114,7 +116,10 @@ Label matchers can also be applied to metric names by matching against the inter
 `{__name__="http_requests_total"}`. Matchers other than `=` (`!=`, `=~`, `!~`) may also be used.
 The following expression selects all metrics that have a name starting with `job:`:
 
-    {__name__=~"^job:.*"}
+    {__name__=~"job:.*"}
+
+All regular expressions in Prometheus use [RE2
+syntax](https://github.com/google/re2/wiki/Syntax).
 
 ### Range Vector Selectors
 
@@ -164,6 +169,14 @@ The same works for range vectors. This returns the 5-minutes rate that
 `http_requests_total` had a week ago:
 
     rate(http_requests_total[5m] offset 1w)
+
+## Subquery
+
+Subquery allows you to run an instant query for a given range and resolution. The result of a subquery is a range vector. 
+
+Syntax: `<instant_query> '[' <range> ':' [<resolution>] ']' [ offset <duration> ]`
+
+* `<resolution>` is optional. Default is the global evaluation interval.
 
 ## Operators
 

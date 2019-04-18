@@ -11,58 +11,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !windows
+
 package tsdb
 
 import (
 	"encoding/binary"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"path"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/fileutil"
-	"github.com/stretchr/testify/require"
+	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/wal"
 )
 
 func TestSegmentWAL_cut(t *testing.T) {
 	tmpdir, err := ioutil.TempDir("", "test_wal_cut")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpdir)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
 
 	// This calls cut() implicitly the first time without a previous tail.
 	w, err := OpenSegmentWAL(tmpdir, nil, 0, nil)
-	require.NoError(t, err)
+	testutil.Ok(t, err)
 
-	require.NoError(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	testutil.Ok(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
 
-	require.NoError(t, w.cut(), "cut failed")
+	testutil.Ok(t, w.cut())
 
 	// Cutting creates a new file.
-	require.Equal(t, 2, len(w.files))
+	testutil.Equals(t, 2, len(w.files))
 
-	require.NoError(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	testutil.Ok(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
 
-	require.NoError(t, w.Close())
+	testutil.Ok(t, w.Close())
 
 	for _, of := range w.files {
 		f, err := os.Open(of.Name())
-		require.NoError(t, err)
+		testutil.Ok(t, err)
 
 		// Verify header data.
 		metab := make([]byte, 8)
 		_, err = f.Read(metab)
-		require.NoError(t, err, "read meta data %s", f.Name())
-		require.Equal(t, WALMagic, binary.BigEndian.Uint32(metab[:4]), "verify magic")
-		require.Equal(t, WALFormatDefault, metab[4], "verify format flag")
+		testutil.Ok(t, err)
+		testutil.Equals(t, WALMagic, binary.BigEndian.Uint32(metab[:4]))
+		testutil.Equals(t, WALFormatDefault, metab[4])
 
 		// We cannot actually check for correct pre-allocation as it is
 		// optional per filesystem and handled transparently.
 		et, flag, b, err := newWALReader(nil, nil).entry(f)
-		require.NoError(t, err)
-		require.Equal(t, WALEntrySeries, et)
-		require.Equal(t, flag, byte(walSeriesSimple))
-		require.Equal(t, []byte("Hello World!!"), b)
+		testutil.Ok(t, err)
+		testutil.Equals(t, WALEntrySeries, et)
+		testutil.Equals(t, byte(walSeriesSimple), flag)
+		testutil.Equals(t, []byte("Hello World!!"), b)
 	}
 }
 
@@ -71,15 +81,17 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 		numMetrics = 20000
 		batch      = 100
 	)
-	series, err := readPrometheusLabels("testdata/20k.series", numMetrics)
-	require.NoError(t, err)
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
+	testutil.Ok(t, err)
 
 	dir, err := ioutil.TempDir("", "test_wal_log_truncate")
-	require.NoError(t, err)
-	// defer os.RemoveAll(dir)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
 	w, err := OpenSegmentWAL(dir, nil, 0, nil)
-	require.NoError(t, err)
+	testutil.Ok(t, err)
 	w.segmentSize = 10000
 
 	for i := 0; i < numMetrics; i += batch {
@@ -89,7 +101,7 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 			rs = append(rs, RefSeries{Labels: s, Ref: uint64(i+j) + 1})
 		}
 		err := w.LogSeries(rs)
-		require.NoError(t, err)
+		testutil.Ok(t, err)
 	}
 
 	// We mark the 2nd half of the files with a min timestamp that should discard
@@ -111,7 +123,7 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 	}
 
 	err = w.Truncate(1000, keepf)
-	require.NoError(t, err)
+	testutil.Ok(t, err)
 
 	var expected []RefSeries
 
@@ -124,12 +136,12 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 	// Call Truncate once again to see whether we can read the written file without
 	// creating a new WAL.
 	err = w.Truncate(1000, keepf)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
+	testutil.Ok(t, err)
+	testutil.Ok(t, w.Close())
 
 	// The same again with a new WAL.
 	w, err = OpenSegmentWAL(dir, nil, 0, nil)
-	require.NoError(t, err)
+	testutil.Ok(t, err)
 
 	var readSeries []RefSeries
 	r := w.Reader()
@@ -138,7 +150,7 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 		readSeries = append(readSeries, s...)
 	}, nil, nil)
 
-	require.Equal(t, expected, readSeries)
+	testutil.Equals(t, expected, readSeries)
 }
 
 // Symmetrical test of reading and writing to the WAL via its main interface.
@@ -150,12 +162,14 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 	)
 	// Generate testing data. It does not make semantical sense but
 	// for the purpose of this test.
-	series, err := readPrometheusLabels("testdata/20k.series", numMetrics)
-	require.NoError(t, err)
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
+	testutil.Ok(t, err)
 
 	dir, err := ioutil.TempDir("", "test_wal_log_restore")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
 	var (
 		recordedSeries  [][]RefSeries
@@ -168,7 +182,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 	// write more data to it, close it.
 	for k := 0; k < numMetrics; k += numMetrics / iterations {
 		w, err := OpenSegmentWAL(dir, nil, 0, nil)
-		require.NoError(t, err)
+		testutil.Ok(t, err)
 
 		// Set smaller segment size so we can actually write several files.
 		w.segmentSize = 1000 * 1000
@@ -204,11 +218,11 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 			}
 		}
 
-		require.NoError(t, r.Read(serf, smplf, delf))
+		testutil.Ok(t, r.Read(serf, smplf, delf))
 
-		require.Equal(t, recordedSamples, resultSamples)
-		require.Equal(t, recordedSeries, resultSeries)
-		require.Equal(t, recordedDeletes, resultDeletes)
+		testutil.Equals(t, recordedSamples, resultSamples)
+		testutil.Equals(t, recordedSeries, resultSeries)
+		testutil.Equals(t, recordedDeletes, resultDeletes)
 
 		series := series[k : k+(numMetrics/iterations)]
 
@@ -239,9 +253,9 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 				})
 			}
 
-			require.NoError(t, w.LogSeries(series))
-			require.NoError(t, w.LogSamples(samples))
-			require.NoError(t, w.LogDeletes(stones))
+			testutil.Ok(t, w.LogSeries(series))
+			testutil.Ok(t, w.LogSamples(samples))
+			testutil.Ok(t, w.LogDeletes(stones))
 
 			if len(lbls) > 0 {
 				recordedSeries = append(recordedSeries, series)
@@ -255,39 +269,41 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 			}
 		}
 
-		require.NoError(t, w.Close())
+		testutil.Ok(t, w.Close())
 	}
 }
 
 func TestWALRestoreCorrupted_invalidSegment(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_wal_log_restore")
-	Ok(t, err)
-	defer os.RemoveAll(dir)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
 	wal, err := OpenSegmentWAL(dir, nil, 0, nil)
-	Ok(t, err)
+	testutil.Ok(t, err)
 
-	_, err = wal.createSegmentFile(dir + "/000000")
-	Ok(t, err)
-	f, err := wal.createSegmentFile(dir + "/000001")
-	Ok(t, err)
-	f2, err := wal.createSegmentFile(dir + "/000002")
-	Ok(t, err)
-	Ok(t, f2.Close())
+	_, err = wal.createSegmentFile(filepath.Join(dir, "000000"))
+	testutil.Ok(t, err)
+	f, err := wal.createSegmentFile(filepath.Join(dir, "000001"))
+	testutil.Ok(t, err)
+	f2, err := wal.createSegmentFile(filepath.Join(dir, "000002"))
+	testutil.Ok(t, err)
+	testutil.Ok(t, f2.Close())
 
 	// Make header of second segment invalid.
 	_, err = f.WriteAt([]byte{1, 2, 3, 4}, 0)
-	Ok(t, err)
-	Ok(t, f.Close())
+	testutil.Ok(t, err)
+	testutil.Ok(t, f.Close())
 
-	Ok(t, wal.Close())
+	testutil.Ok(t, wal.Close())
 
-	wal, err = OpenSegmentWAL(dir, log.NewLogfmtLogger(os.Stderr), 0, nil)
-	Ok(t, err)
+	_, err = OpenSegmentWAL(dir, log.NewLogfmtLogger(os.Stderr), 0, nil)
+	testutil.Ok(t, err)
 
 	fns, err := fileutil.ReadDir(dir)
-	Ok(t, err)
-	Equals(t, []string{"000000"}, fns)
+	testutil.Ok(t, err)
+	testutil.Equals(t, []string{"000000"}, fns)
 }
 
 // Test reading from a WAL that has been corrupted through various means.
@@ -300,56 +316,56 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			name: "truncate_checksum",
 			f: func(t *testing.T, w *SegmentWAL) {
 				f, err := os.OpenFile(w.files[0].Name(), os.O_WRONLY, 0666)
-				require.NoError(t, err)
+				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
-				require.NoError(t, err)
+				off, err := f.Seek(0, io.SeekEnd)
+				testutil.Ok(t, err)
 
-				require.NoError(t, f.Truncate(off-1))
+				testutil.Ok(t, f.Truncate(off-1))
 			},
 		},
 		{
 			name: "truncate_body",
 			f: func(t *testing.T, w *SegmentWAL) {
 				f, err := os.OpenFile(w.files[0].Name(), os.O_WRONLY, 0666)
-				require.NoError(t, err)
+				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
-				require.NoError(t, err)
+				off, err := f.Seek(0, io.SeekEnd)
+				testutil.Ok(t, err)
 
-				require.NoError(t, f.Truncate(off-8))
+				testutil.Ok(t, f.Truncate(off-8))
 			},
 		},
 		{
 			name: "body_content",
 			f: func(t *testing.T, w *SegmentWAL) {
 				f, err := os.OpenFile(w.files[0].Name(), os.O_WRONLY, 0666)
-				require.NoError(t, err)
+				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
-				require.NoError(t, err)
+				off, err := f.Seek(0, io.SeekEnd)
+				testutil.Ok(t, err)
 
 				// Write junk before checksum starts.
 				_, err = f.WriteAt([]byte{1, 2, 3, 4}, off-8)
-				require.NoError(t, err)
+				testutil.Ok(t, err)
 			},
 		},
 		{
 			name: "checksum",
 			f: func(t *testing.T, w *SegmentWAL) {
 				f, err := os.OpenFile(w.files[0].Name(), os.O_WRONLY, 0666)
-				require.NoError(t, err)
+				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
-				require.NoError(t, err)
+				off, err := f.Seek(0, io.SeekEnd)
+				testutil.Ok(t, err)
 
 				// Write junk into checksum
 				_, err = f.WriteAt([]byte{1, 2, 3, 4}, off-4)
-				require.NoError(t, err)
+				testutil.Ok(t, err)
 			},
 		},
 	}
@@ -358,21 +374,28 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			// Generate testing data. It does not make semantical sense but
 			// for the purpose of this test.
 			dir, err := ioutil.TempDir("", "test_corrupted")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
+			testutil.Ok(t, err)
+			defer func() {
+				testutil.Ok(t, os.RemoveAll(dir))
+			}()
 
 			w, err := OpenSegmentWAL(dir, nil, 0, nil)
-			require.NoError(t, err)
+			testutil.Ok(t, err)
 
-			require.NoError(t, w.LogSamples([]RefSample{{T: 1, V: 2}}))
-			require.NoError(t, w.LogSamples([]RefSample{{T: 2, V: 3}}))
+			testutil.Ok(t, w.LogSamples([]RefSample{{T: 1, V: 2}}))
+			testutil.Ok(t, w.LogSamples([]RefSample{{T: 2, V: 3}}))
 
-			require.NoError(t, w.cut())
+			testutil.Ok(t, w.cut())
 
-			require.NoError(t, w.LogSamples([]RefSample{{T: 3, V: 4}}))
-			require.NoError(t, w.LogSamples([]RefSample{{T: 5, V: 6}}))
+			// Sleep 2 seconds to avoid error where cut and test "cases" function may write or
+			// truncate the file out of orders as "cases" are not synchronized with cut.
+			// Hopefully cut will complete by 2 seconds.
+			time.Sleep(2 * time.Second)
 
-			require.NoError(t, w.Close())
+			testutil.Ok(t, w.LogSamples([]RefSample{{T: 3, V: 4}}))
+			testutil.Ok(t, w.LogSamples([]RefSample{{T: 5, V: 6}}))
+
+			testutil.Ok(t, w.Close())
 
 			// cut() truncates and fsyncs the first segment async. If it happens after
 			// the corruption we apply below, the corruption will be overwritten again.
@@ -387,39 +410,157 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			logger := log.NewLogfmtLogger(os.Stderr)
 
 			w2, err := OpenSegmentWAL(dir, logger, 0, nil)
-			require.NoError(t, err)
+			testutil.Ok(t, err)
 
 			r := w2.Reader()
 
 			serf := func(l []RefSeries) {
-				require.Equal(t, 0, len(l))
+				testutil.Equals(t, 0, len(l))
 			}
 
 			// Weird hack to check order of reads.
 			i := 0
 			samplf := func(s []RefSample) {
 				if i == 0 {
-					require.Equal(t, []RefSample{{T: 1, V: 2}}, s)
+					testutil.Equals(t, []RefSample{{T: 1, V: 2}}, s)
 					i++
 				} else {
-					require.Equal(t, []RefSample{{T: 99, V: 100}}, s)
+					testutil.Equals(t, []RefSample{{T: 99, V: 100}}, s)
 				}
 			}
 
-			require.NoError(t, r.Read(serf, samplf, nil))
+			testutil.Ok(t, r.Read(serf, samplf, nil))
 
-			require.NoError(t, w2.LogSamples([]RefSample{{T: 99, V: 100}}))
-			require.NoError(t, w2.Close())
+			testutil.Ok(t, w2.LogSamples([]RefSample{{T: 99, V: 100}}))
+			testutil.Ok(t, w2.Close())
 
 			// We should see the first valid entry and the new one, everything after
 			// is truncated.
 			w3, err := OpenSegmentWAL(dir, logger, 0, nil)
-			require.NoError(t, err)
+			testutil.Ok(t, err)
 
 			r = w3.Reader()
 
 			i = 0
-			require.NoError(t, r.Read(serf, samplf, nil))
+			testutil.Ok(t, r.Read(serf, samplf, nil))
 		})
 	}
+}
+
+func TestMigrateWAL_Empty(t *testing.T) {
+	// The migration proecedure must properly deal with a zero-length segment,
+	// which is valid in the new format.
+	dir, err := ioutil.TempDir("", "walmigrate")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
+
+	wdir := path.Join(dir, "wal")
+
+	// Initialize empty WAL.
+	w, err := wal.New(nil, nil, wdir)
+	testutil.Ok(t, err)
+	testutil.Ok(t, w.Close())
+
+	testutil.Ok(t, MigrateWAL(nil, wdir))
+}
+
+func TestMigrateWAL_Fuzz(t *testing.T) {
+	dir, err := ioutil.TempDir("", "walmigrate")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
+
+	wdir := path.Join(dir, "wal")
+
+	// Should pass if no WAL exists yet.
+	testutil.Ok(t, MigrateWAL(nil, wdir))
+
+	oldWAL, err := OpenSegmentWAL(wdir, nil, time.Minute, nil)
+	testutil.Ok(t, err)
+
+	// Write some data.
+	testutil.Ok(t, oldWAL.LogSeries([]RefSeries{
+		{Ref: 100, Labels: labels.FromStrings("abc", "def", "123", "456")},
+		{Ref: 1, Labels: labels.FromStrings("abc", "def2", "1234", "4567")},
+	}))
+	testutil.Ok(t, oldWAL.LogSamples([]RefSample{
+		{Ref: 1, T: 100, V: 200},
+		{Ref: 2, T: 300, V: 400},
+	}))
+	testutil.Ok(t, oldWAL.LogSeries([]RefSeries{
+		{Ref: 200, Labels: labels.FromStrings("xyz", "def", "foo", "bar")},
+	}))
+	testutil.Ok(t, oldWAL.LogSamples([]RefSample{
+		{Ref: 3, T: 100, V: 200},
+		{Ref: 4, T: 300, V: 400},
+	}))
+	testutil.Ok(t, oldWAL.LogDeletes([]Stone{
+		{ref: 1, intervals: []Interval{{100, 200}}},
+	}))
+
+	testutil.Ok(t, oldWAL.Close())
+
+	// Perform migration.
+	testutil.Ok(t, MigrateWAL(nil, wdir))
+
+	w, err := wal.New(nil, nil, wdir)
+	testutil.Ok(t, err)
+
+	// We can properly write some new data after migration.
+	var enc RecordEncoder
+	testutil.Ok(t, w.Log(enc.Samples([]RefSample{
+		{Ref: 500, T: 1, V: 1},
+	}, nil)))
+
+	testutil.Ok(t, w.Close())
+
+	// Read back all data.
+	sr, err := wal.NewSegmentsReader(wdir)
+	testutil.Ok(t, err)
+
+	r := wal.NewReader(sr)
+	var res []interface{}
+	var dec RecordDecoder
+
+	for r.Next() {
+		rec := r.Record()
+
+		switch dec.Type(rec) {
+		case RecordSeries:
+			s, err := dec.Series(rec, nil)
+			testutil.Ok(t, err)
+			res = append(res, s)
+		case RecordSamples:
+			s, err := dec.Samples(rec, nil)
+			testutil.Ok(t, err)
+			res = append(res, s)
+		case RecordTombstones:
+			s, err := dec.Tombstones(rec, nil)
+			testutil.Ok(t, err)
+			res = append(res, s)
+		default:
+			t.Fatalf("unknown record type %d", dec.Type(rec))
+		}
+	}
+	testutil.Ok(t, r.Err())
+
+	testutil.Equals(t, []interface{}{
+		[]RefSeries{
+			{Ref: 100, Labels: labels.FromStrings("abc", "def", "123", "456")},
+			{Ref: 1, Labels: labels.FromStrings("abc", "def2", "1234", "4567")},
+		},
+		[]RefSample{{Ref: 1, T: 100, V: 200}, {Ref: 2, T: 300, V: 400}},
+		[]RefSeries{
+			{Ref: 200, Labels: labels.FromStrings("xyz", "def", "foo", "bar")},
+		},
+		[]RefSample{{Ref: 3, T: 100, V: 200}, {Ref: 4, T: 300, V: 400}},
+		[]Stone{{ref: 1, intervals: []Interval{{100, 200}}}},
+		[]RefSample{{Ref: 500, T: 1, V: 1}},
+	}, res)
+
+	// Migrating an already migrated WAL shouldn't do anything.
+	testutil.Ok(t, MigrateWAL(nil, wdir))
 }

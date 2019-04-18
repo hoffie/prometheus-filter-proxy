@@ -14,6 +14,8 @@
 package storage
 
 import (
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -96,8 +98,18 @@ func TestMergeSeriesSet(t *testing.T) {
 				newMockSeries(labels.FromStrings("foo", "bar"), []sample{{0, 0}, {1, 1}, {2, 2}, {3, 3}}),
 			),
 		},
+		{
+			input: []SeriesSet{newMockSeriesSet(
+				newMockSeries(labels.FromStrings("foo", "bar"), []sample{{0, math.NaN()}}),
+			), newMockSeriesSet(
+				newMockSeries(labels.FromStrings("foo", "bar"), []sample{{0, math.NaN()}}),
+			)},
+			expected: newMockSeriesSet(
+				newMockSeries(labels.FromStrings("foo", "bar"), []sample{{0, math.NaN()}}),
+			),
+		},
 	} {
-		merged := newMergeSeriesSet(tc.input)
+		merged := NewMergeSeriesSet(tc.input, nil)
 		for merged.Next() {
 			require.True(t, tc.expected.Next())
 			actualSeries := merged.At()
@@ -134,6 +146,14 @@ func TestMergeIterator(t *testing.T) {
 				newListSeriesIterator([]sample{{2, 2}, {5, 5}}),
 			},
 			expected: []sample{{0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}},
+		},
+		{
+			input: []SeriesIterator{
+				newListSeriesIterator([]sample{{0, 0}, {1, 1}}),
+				newListSeriesIterator([]sample{{0, 0}, {2, 2}}),
+				newListSeriesIterator([]sample{{2, 2}, {3, 3}}),
+			},
+			expected: []sample{{0, 0}, {1, 1}, {2, 2}, {3, 3}},
 		},
 	} {
 		merged := newMergeIterator(tc.input)
@@ -188,6 +208,10 @@ func drainSamples(iter SeriesIterator) []sample {
 	result := []sample{}
 	for iter.Next() {
 		t, v := iter.At()
+		// NaNs can't be compared normally, so substitute for another value.
+		if math.IsNaN(v) {
+			v = -42
+		}
 		result = append(result, sample{t, v})
 	}
 	return result
@@ -218,13 +242,53 @@ func (m *mockSeriesSet) Err() error {
 	return nil
 }
 
-func newMockSeries(lset labels.Labels, samples []sample) Series {
-	return &mockSeries{
-		labels: func() labels.Labels {
-			return lset
-		},
-		iterator: func() SeriesIterator {
-			return newListSeriesIterator(samples)
-		},
+var result []sample
+
+func makeSeriesSet(numSeries, numSamples int) SeriesSet {
+	series := []Series{}
+	for j := 0; j < numSeries; j++ {
+		labels := labels.Labels{{Name: "foo", Value: fmt.Sprintf("bar%d", j)}}
+		samples := []sample{}
+		for k := 0; k < numSamples; k++ {
+			samples = append(samples, sample{t: int64(k), v: float64(k)})
+		}
+		series = append(series, newMockSeries(labels, samples))
+	}
+	return newMockSeriesSet(series...)
+}
+
+func makeMergeSeriesSet(numSeriesSets, numSeries, numSamples int) SeriesSet {
+	seriesSets := []SeriesSet{}
+	for i := 0; i < numSeriesSets; i++ {
+		seriesSets = append(seriesSets, makeSeriesSet(numSeries, numSamples))
+	}
+	return NewMergeSeriesSet(seriesSets, nil)
+}
+
+func benchmarkDrain(seriesSet SeriesSet, b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		for seriesSet.Next() {
+			result = drainSamples(seriesSet.At().Iterator())
+		}
+	}
+}
+
+func BenchmarkNoMergeSeriesSet_100_100(b *testing.B) {
+	seriesSet := makeSeriesSet(100, 100)
+	benchmarkDrain(seriesSet, b)
+}
+
+func BenchmarkMergeSeriesSet(b *testing.B) {
+	for _, bm := range []struct {
+		numSeriesSets, numSeries, numSamples int
+	}{
+		{1, 100, 100},
+		{10, 100, 100},
+		{100, 100, 100},
+	} {
+		seriesSet := makeMergeSeriesSet(bm.numSeriesSets, bm.numSeries, bm.numSamples)
+		b.Run(fmt.Sprintf("%d_%d_%d", bm.numSeriesSets, bm.numSeries, bm.numSamples), func(b *testing.B) {
+			benchmarkDrain(seriesSet, b)
+		})
 	}
 }

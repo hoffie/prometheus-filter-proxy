@@ -17,19 +17,22 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	"github.com/prometheus/tsdb/testutil"
 )
 
 func TestWriteAndReadbackTombStones(t *testing.T) {
 	tmpdir, _ := ioutil.TempDir("", "test")
-	defer os.RemoveAll(tmpdir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
 
 	ref := uint64(0)
 
-	stones := make(map[uint64]Intervals)
+	stones := newMemTombstones()
 	// Generate the tombstones.
 	for i := 0; i < 100; i++ {
 		ref += uint64(rand.Int31n(10)) + 1
@@ -40,16 +43,16 @@ func TestWriteAndReadbackTombStones(t *testing.T) {
 			dranges = dranges.add(Interval{mint, mint + rand.Int63n(1000)})
 			mint += rand.Int63n(1000) + 1
 		}
-		stones[ref] = dranges
+		stones.addInterval(ref, dranges...)
 	}
 
-	require.NoError(t, writeTombstoneFile(tmpdir, newTombstoneReader(stones)))
+	testutil.Ok(t, writeTombstoneFile(tmpdir, stones))
 
-	restr, err := readTombstones(tmpdir)
-	require.NoError(t, err)
-	exptr := newTombstoneReader(stones)
+	restr, _, err := readTombstones(tmpdir)
+	testutil.Ok(t, err)
+
 	// Compare the two readers.
-	require.Equal(t, exptr, restr)
+	testutil.Equals(t, stones, restr)
 }
 
 func TestAddingNewIntervals(t *testing.T) {
@@ -117,7 +120,28 @@ func TestAddingNewIntervals(t *testing.T) {
 
 	for _, c := range cases {
 
-		require.Equal(t, c.exp, c.exist.add(c.new))
+		testutil.Equals(t, c.exp, c.exist.add(c.new))
 	}
-	return
+}
+
+// TestMemTombstonesConcurrency to make sure they are safe to access from different goroutines.
+func TestMemTombstonesConcurrency(t *testing.T) {
+	tomb := newMemTombstones()
+	totalRuns := 100
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		for x := 0; x < totalRuns; x++ {
+			tomb.addInterval(uint64(x), Interval{int64(x), int64(x)})
+		}
+		wg.Done()
+	}()
+	go func() {
+		for x := 0; x < totalRuns; x++ {
+			tomb.Get(uint64(x))
+		}
+		wg.Done()
+	}()
+	wg.Wait()
 }
