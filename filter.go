@@ -43,6 +43,7 @@ func (v *visitor) Visit(node promql.Node) (w promql.Visitor) {
 	case *promql.Call:
 	case *promql.AggregateExpr:
 	case *promql.NumberLiteral:
+	case *promql.StringLiteral:
 	case *promql.ParenExpr:
 	case promql.Expressions:
 	default:
