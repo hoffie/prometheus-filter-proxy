@@ -39,13 +39,15 @@ func (v *visitor) Visit(node promql.Node, path []promql.Node) (promql.Visitor, e
 		n.LabelMatchers = v.addFilter(n.LabelMatchers)
 	case *promql.MatrixSelector:
 		n.LabelMatchers = v.addFilter(n.LabelMatchers)
+	case *promql.AggregateExpr:
 	case *promql.BinaryExpr:
 	case *promql.Call:
-	case *promql.AggregateExpr:
+	case promql.Expressions:
 	case *promql.NumberLiteral:
 	case *promql.StringLiteral:
+	case *promql.SubqueryExpr:
 	case *promql.ParenExpr:
-	case promql.Expressions:
+	case *promql.UnaryExpr:
 	default:
 		log.Warnf("Unknown type %T", n)
 	}
