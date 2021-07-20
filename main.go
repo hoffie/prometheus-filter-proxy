@@ -114,7 +114,7 @@ type router struct {
 }
 
 func (r router) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if req.Method != "GET" {
+	if req.Method != "GET" && req.Method != "POST" {
 		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte("Unsupported method\n"))
 		log.WithFields(log.Fields{"method": req.Method, "path": req.URL.String()}).Warn("unsupported method")
