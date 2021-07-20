@@ -1,0 +1,49 @@
+# github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751
+github.com/alecthomas/template
+github.com/alecthomas/template/parse
+# github.com/alecthomas/units v0.0.0-20210208195552-ff826a37aa15
+github.com/alecthomas/units
+# github.com/cespare/xxhash/v2 v2.1.1
+github.com/cespare/xxhash/v2
+# github.com/go-kit/log v0.1.0
+github.com/go-kit/log
+github.com/go-kit/log/level
+# github.com/go-logfmt/logfmt v0.5.0
+github.com/go-logfmt/logfmt
+# github.com/golang/snappy v0.0.4
+## explicit
+# github.com/pkg/errors v0.9.1
+github.com/pkg/errors
+# github.com/prometheus/common v0.29.0
+github.com/prometheus/common/model
+# github.com/prometheus/procfs v0.7.0
+## explicit
+# github.com/prometheus/prometheus v0.0.0-20210701133801-b0944590a1c9
+## explicit
+github.com/prometheus/prometheus/pkg/exemplar
+github.com/prometheus/prometheus/pkg/labels
+github.com/prometheus/prometheus/pkg/timestamp
+github.com/prometheus/prometheus/pkg/value
+github.com/prometheus/prometheus/promql/parser
+github.com/prometheus/prometheus/storage
+github.com/prometheus/prometheus/tsdb/chunkenc
+github.com/prometheus/prometheus/tsdb/chunks
+github.com/prometheus/prometheus/tsdb/errors
+github.com/prometheus/prometheus/tsdb/fileutil
+github.com/prometheus/prometheus/tsdb/tsdbutil
+github.com/prometheus/prometheus/util/strutil
+# github.com/sirupsen/logrus v1.8.1
+## explicit
+github.com/sirupsen/logrus
+# go.uber.org/atomic v1.8.0
+go.uber.org/atomic
+# golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
+## explicit
+golang.org/x/sys/internal/unsafeheader
+golang.org/x/sys/unix
+golang.org/x/sys/windows
+# google.golang.org/protobuf v1.27.1
+## explicit
+# gopkg.in/alecthomas/kingpin.v2 v2.2.6
+## explicit
+gopkg.in/alecthomas/kingpin.v2

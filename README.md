@@ -16,7 +16,7 @@ It is recommended that long-term tests be run before putting this tool into prod
 
 ## Build
 This tool is built using Go (tested with 1.9.2 or newer).
-It makes use of some popular Go libraries, which have been vendored (using `dep`) to allow for reproducible builds and simplified cloning.
+It makes use of some popular Go libraries, which have been vendored (using `go mod vendor`) to allow for reproducible builds and simplified cloning.
 
 `go get -u github.com/hoffie/prometheus-filter-proxy`
 

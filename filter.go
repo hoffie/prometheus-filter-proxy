@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/promql"
+	promql "github.com/prometheus/prometheus/promql/parser"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -38,7 +38,8 @@ func (v *visitor) Visit(node promql.Node, path []promql.Node) (promql.Visitor, e
 	case *promql.VectorSelector:
 		n.LabelMatchers = v.addFilter(n.LabelMatchers)
 	case *promql.MatrixSelector:
-		n.LabelMatchers = v.addFilter(n.LabelMatchers)
+		// VectorSelector is an Expr and is treated as a child, therefore
+		// we do not have to explicitly handle it here.
 	case *promql.AggregateExpr:
 	case *promql.BinaryExpr:
 	case *promql.Call:
