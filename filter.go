@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/prometheus/prometheus/pkg/labels"
+	"github.com/prometheus/prometheus/model/labels"
 	promql "github.com/prometheus/prometheus/promql/parser"
 	log "github.com/sirupsen/logrus"
 )
