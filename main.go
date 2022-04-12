@@ -12,11 +12,11 @@ import (
 )
 
 var (
-	verbose            = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
-	upstream           = kingpin.Flag("upstream.addr", "upstream to connect to").Required().String()
-	upstreamPrefixPath = kingpin.Flag("upstream.prefix-path", "upstream prefix path to prepend").String()
-	listenAddr         = kingpin.Flag("proxy.listen-addr", "address the proxy will listen on").Required().String()
-
+	verbose              = kingpin.Flag("verbose", "Verbose mode.").Short('v').Bool()
+	upstream             = kingpin.Flag("upstream.addr", "upstream to connect to").Required().String()
+	upstreamPrefixPath   = kingpin.Flag("upstream.prefix-path", "upstream prefix path to prepend").String()
+	scheme               = kingpin.Flag("upstream.scheme", "upstream scheme").Default("http").String()
+	listenAddr           = kingpin.Flag("proxy.listen-addr", "address the proxy will listen on").Required().String()
 	urlPattern           = regexp.MustCompile(`^/([^/]+)(/api/v.+)$`)
 	supportedPathPattern = regexp.MustCompile(`^/api/v1/(query|query_range|series|label/__name__/values)$`)
 )
@@ -73,9 +73,9 @@ func handleQuery(filter string, rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 	url := &url.URL{
-		Scheme:   "http",
+		Scheme:   *scheme,
 		Host:     *upstream,
-		Path:     fmt.Sprintf("%s%s", *upstreamPrefixPath, r.URL.Path), //FIXME
+		Path:     fmt.Sprintf("%s%s", *upstreamPrefixPath, r.URL.Path), // FIXME
 		RawQuery: params.Encode(),
 	}
 	log.WithFields(log.Fields{"url": url.String()}).Debug("starting request to upstream")
