@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/alecthomas/kingpin/v2 v2.3.2
-	github.com/prometheus/prometheus v0.47.0
+	github.com/prometheus/prometheus v0.47.1
 	github.com/sirupsen/logrus v1.9.3
 )
 
