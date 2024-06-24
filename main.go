@@ -18,7 +18,7 @@ var (
 	listenAddr         = kingpin.Flag("proxy.listen-addr", "address the proxy will listen on").Required().String()
 
 	urlPattern           = regexp.MustCompile(`^/([^/]+)(/api/v.+)$`)
-	supportedPathPattern = regexp.MustCompile(`^/api/v1/(query|query_range|series|label/[a-zA-Z0-9_]+/values)$`)
+	supportedPathPattern = regexp.MustCompile(`^/api/v1/(query|query_range|query_exemplars|series|label/[a-zA-Z0-9_]+/values)$`)
 )
 
 func handleQuery(filter string, rw http.ResponseWriter, r *http.Request) {
