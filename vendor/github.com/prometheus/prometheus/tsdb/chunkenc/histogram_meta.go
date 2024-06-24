@@ -73,7 +73,6 @@ func readHistogramChunkLayoutSpans(b *bstreamReader) ([]histogram.Span, error) {
 		return nil, err
 	}
 	for i := 0; i < int(num); i++ {
-
 		length, err := readVarbitUint(b)
 		if err != nil {
 			return nil, err
@@ -284,7 +283,7 @@ loop:
 // cover an entirely different set of buckets. The function returns the
 // “forward” inserts to expand 'a' to also cover all the buckets exclusively
 // covered by 'b', and it returns the “backward” inserts to expand 'b' to also
-// cover all the buckets exclusively covered by 'a'
+// cover all the buckets exclusively covered by 'a'.
 func expandSpansBothWays(a, b []histogram.Span) (forward, backward []Insert, mergedSpans []histogram.Span) {
 	ai := newBucketIterator(a)
 	bi := newBucketIterator(b)
