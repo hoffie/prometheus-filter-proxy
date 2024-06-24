@@ -130,7 +130,7 @@ func (r router) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	apiPath := m[2]
 	if !supportedPath(apiPath) {
 		rw.WriteHeader(http.StatusBadRequest)
-		rw.Write([]byte("Unsupported path\n"))
+		rw.Write([]byte("prometheus-filter-proxy: Unsupported path\n"))
 		log.WithFields(log.Fields{"method": req.Method, "path": req.URL.String()}).Warn("unsupported path")
 		return
 	}
