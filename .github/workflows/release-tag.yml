@@ -30,7 +30,7 @@ jobs:
       run: rsync prometheus-filter-proxy README.md LICENSE prometheus-filter-proxy-${{ env.release_version }}-linux-amd64 && tar cvjf prometheus-filter-proxy-${{ env.release_version }}-linux-amd64.tar.bz2 prometheus-filter-proxy-${{ env.release_version }}-linux-amd64
 
     - name: Release
-      uses: softprops/action-gh-release@a485adba73bc95d9848c86e019d675bac99de0ed
+      uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
       if: startsWith(github.ref, 'refs/tags/')
       with:
         files: |
