@@ -17,11 +17,19 @@ var (
 	upstreamPrefixPath = kingpin.Flag("upstream.prefix-path", "upstream prefix path to prepend").String()
 	listenAddr         = kingpin.Flag("proxy.listen-addr", "address the proxy will listen on").Required().String()
 
-	urlPattern           = regexp.MustCompile(`^/([^/]+)(/api/v.+)$`)
-	supportedPathPattern = regexp.MustCompile(`^/api/v1/(query|query_range|query_exemplars|series|labels|label/[a-zA-Z0-9_]+/values)$`)
+	urlPattern             = regexp.MustCompile(`^/([^/]+)(/api/v.+)$`)
+	supportedQueryPatterns = regexp.MustCompile(`^/api/v1/(query|query_range|query_exemplars)$`)
+	supportedMatchPatterns = regexp.MustCompile(`^/api/v1/(series|labels|label/[a-zA-Z0-9_]+/values)$`)
+	supportedPlainPatterns = regexp.MustCompile(`^/api/v1/(format_query)$`)
 )
 
-func handleQuery(filter string, rw http.ResponseWriter, r *http.Request) {
+const (
+	TYPE_QUERY = iota
+	TYPE_MATCH
+	TYPE_PLAIN
+)
+
+func handleQuery(apiType uint, filter string, rw http.ResponseWriter, r *http.Request) {
 	log.WithFields(log.Fields{"method": r.Method, "path": r.URL.String(), "filter": filter}).Debug("handling request")
 	params := &url.Values{}
 	err := r.ParseForm()
@@ -29,6 +37,27 @@ func handleQuery(filter string, rw http.ResponseWriter, r *http.Request) {
 		log.WithFields(log.Fields{"err": err}).Warn("failed to parse query string")
 		rw.WriteHeader(http.StatusBadRequest)
 		return
+	}
+	switch apiType {
+	case TYPE_QUERY:
+		if !r.Form.Has("query") {
+			log.WithFields(log.Fields{"method": r.Method, "path": r.URL.String()}).Warn("missing query parameter")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+	case TYPE_MATCH:
+		if !r.Form.Has("match[]") {
+			// This is valid, but we need to ensure that we have at least one
+			// matcher.
+			r.Form.Add("match[]", "{}")
+		}
+	case TYPE_PLAIN:
+		// no special handling needed
+	default:
+		log.WithFields(log.Fields{"method": r.Method, "path": r.URL.String()}).Warn("unhandled api type")
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+
 	}
 	for k, vv := range r.Form {
 		log.WithFields(log.Fields{"k": k}).Debug("handling form key")
@@ -132,18 +161,21 @@ func (r router) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	filter := "{" + m[1] + "}"
 	apiPath := m[2]
-	if !supportedPath(apiPath) {
+	var apiType uint
+	if supportedQueryPatterns.MatchString(apiPath) {
+		apiType = TYPE_QUERY
+	} else if supportedMatchPatterns.MatchString(apiPath) {
+		apiType = TYPE_MATCH
+	} else if supportedPlainPatterns.MatchString(apiPath) {
+		apiType = TYPE_PLAIN
+	} else {
 		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte("prometheus-filter-proxy: Unsupported path\n"))
 		log.WithFields(log.Fields{"method": req.Method, "path": req.URL.String()}).Warn("unsupported path")
 		return
 	}
 	req.URL.Path = apiPath
-	handleQuery(filter, rw, req)
-}
-
-func supportedPath(path string) bool {
-	return supportedPathPattern.MatchString(path)
+	handleQuery(apiType, filter, rw, req)
 }
 
 func main() {

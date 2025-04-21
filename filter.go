@@ -56,10 +56,18 @@ func (v *visitor) Visit(node promql.Node, path []promql.Node) (promql.Visitor, e
 }
 
 func addQueryFilter(filter, query string) (string, error) {
-	expr, err := promql.ParseExpr(query)
-	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Debug("ParseExpr")
-		return "", fmt.Errorf("promql parse error: %s", err)
+	var expr promql.Expr
+	if query == "{}" {
+		expr = &promql.VectorSelector{
+			BypassEmptyMatcherCheck: true,
+		}
+	} else {
+		var err error
+		expr, err = promql.ParseExpr(query)
+		if err != nil {
+			log.WithFields(log.Fields{"err": err}).Debug("ParseExpr")
+			return "", fmt.Errorf("promql parse error: %s", err)
+		}
 	}
 	log.Debug(promql.Tree(expr))
 	v, err := newVisitor(filter)
