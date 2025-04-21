@@ -63,6 +63,10 @@ func handleQuery(filter string, rw http.ResponseWriter, r *http.Request) {
 			fallthrough
 		case "step":
 			fallthrough
+		case "limit":
+			fallthrough
+		case "timeout":
+			fallthrough
 		case "time":
 			for _, v := range vv {
 				params.Add(k, v)
