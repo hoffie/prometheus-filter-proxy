@@ -6,7 +6,7 @@ toolchain go1.24.2
 
 require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
-	github.com/prometheus/prometheus v0.303.0
+	github.com/prometheus/prometheus v0.304.1
 	github.com/sirupsen/logrus v1.9.3
 )
 
