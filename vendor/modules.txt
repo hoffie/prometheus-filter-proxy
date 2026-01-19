@@ -55,8 +55,8 @@ github.com/prometheus/prometheus/tsdb/errors
 github.com/prometheus/prometheus/tsdb/fileutil
 github.com/prometheus/prometheus/util/annotations
 github.com/prometheus/prometheus/util/strutil
-# github.com/sirupsen/logrus v1.9.3
-## explicit; go 1.13
+# github.com/sirupsen/logrus v1.9.4
+## explicit; go 1.17
 github.com/sirupsen/logrus
 # github.com/xhit/go-str2duration/v2 v2.1.0
 ## explicit; go 1.13
