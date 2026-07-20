@@ -23,9 +23,6 @@ type Function struct {
 	Experimental bool
 }
 
-// EnableExperimentalFunctions controls whether experimentalFunctions are enabled.
-var EnableExperimentalFunctions bool
-
 // Functions is a list of all functions supported by PromQL, including their types.
 var Functions = map[string]*Function{
 	"abs": {
@@ -147,6 +144,12 @@ var Functions = map[string]*Function{
 		ArgTypes:   []ValueType{ValueTypeVector},
 		ReturnType: ValueTypeVector,
 	},
+	"end": {
+		Name:         "end",
+		ArgTypes:     []ValueType{},
+		ReturnType:   ValueTypeScalar,
+		Experimental: true,
+	},
 	"delta": {
 		Name:       "delta",
 		ArgTypes:   []ValueType{ValueTypeMatrix},
@@ -208,6 +211,13 @@ var Functions = map[string]*Function{
 		ArgTypes:   []ValueType{ValueTypeScalar, ValueTypeVector},
 		ReturnType: ValueTypeVector,
 	},
+	"histogram_quantiles": {
+		Name:         "histogram_quantiles",
+		ArgTypes:     []ValueType{ValueTypeVector, ValueTypeString, ValueTypeScalar, ValueTypeScalar},
+		Variadic:     9,
+		ReturnType:   ValueTypeVector,
+		Experimental: true,
+	},
 	"double_exponential_smoothing": {
 		Name:         "double_exponential_smoothing",
 		ArgTypes:     []ValueType{ValueTypeMatrix, ValueTypeScalar, ValueTypeScalar},
@@ -253,10 +263,22 @@ var Functions = map[string]*Function{
 		Variadic:   -1,
 		ReturnType: ValueTypeVector,
 	},
+	"max_of": {
+		Name:         "max_of",
+		ArgTypes:     []ValueType{ValueTypeScalar, ValueTypeScalar},
+		ReturnType:   ValueTypeScalar,
+		Experimental: true,
+	},
 	"last_over_time": {
 		Name:       "last_over_time",
 		ArgTypes:   []ValueType{ValueTypeMatrix},
 		ReturnType: ValueTypeVector,
+	},
+	"min_of": {
+		Name:         "min_of",
+		ArgTypes:     []ValueType{ValueTypeScalar, ValueTypeScalar},
+		ReturnType:   ValueTypeScalar,
+		Experimental: true,
 	},
 	"ln": {
 		Name:       "ln",
@@ -350,6 +372,12 @@ var Functions = map[string]*Function{
 		ArgTypes:   []ValueType{ValueTypeVector},
 		ReturnType: ValueTypeVector,
 	},
+	"range": {
+		Name:         "range",
+		ArgTypes:     []ValueType{},
+		ReturnType:   ValueTypeScalar,
+		Experimental: true,
+	},
 	"rate": {
 		Name:       "rate",
 		ArgTypes:   []ValueType{ValueTypeMatrix},
@@ -414,6 +442,18 @@ var Functions = map[string]*Function{
 		Name:       "sqrt",
 		ArgTypes:   []ValueType{ValueTypeVector},
 		ReturnType: ValueTypeVector,
+	},
+	"start": {
+		Name:         "start",
+		ArgTypes:     []ValueType{},
+		ReturnType:   ValueTypeScalar,
+		Experimental: true,
+	},
+	"step": {
+		Name:         "step",
+		ArgTypes:     []ValueType{},
+		ReturnType:   ValueTypeScalar,
+		Experimental: true,
 	},
 	"stddev_over_time": {
 		Name:       "stddev_over_time",
