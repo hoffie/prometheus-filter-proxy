@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/prometheus/prometheus/util/kahansum"
@@ -184,8 +185,8 @@ func (h *FloatHistogram) String() string {
 			nBuckets = append(nBuckets, it.At())
 		}
 	}
-	for i := len(nBuckets) - 1; i >= 0; i-- {
-		fmt.Fprintf(&sb, ", %s", nBuckets[i].String())
+	for _, v := range slices.Backward(nBuckets) {
+		fmt.Fprintf(&sb, ", %s", v.String())
 	}
 
 	if h.ZeroCount != 0 {
@@ -380,7 +381,8 @@ func (h *FloatHistogram) Add(other *FloatHistogram) (res *FloatHistogram, counte
 				false,
 				hPositiveSpans, hPositiveBuckets, h.CustomValues,
 				otherPositiveSpans, otherPositiveBuckets, other.CustomValues,
-				nil, intersectedBounds)
+				nil, intersectedBounds,
+			)
 			h.CustomValues = intersectedBounds
 		}
 		return h, counterResetCollision, nhcbBoundsReconciled, nil
@@ -457,7 +459,8 @@ func (h *FloatHistogram) KahanAdd(other, c *FloatHistogram) (updatedC *FloatHist
 				false,
 				hPositiveSpans, hPositiveBuckets, h.CustomValues,
 				otherPositiveSpans, otherPositiveBuckets, other.CustomValues,
-				cPositiveBuckets, intersectedBounds)
+				cPositiveBuckets, intersectedBounds,
+			)
 			h.CustomValues = intersectedBounds
 			c.CustomValues = intersectedBounds
 		}
@@ -465,16 +468,14 @@ func (h *FloatHistogram) KahanAdd(other, c *FloatHistogram) (updatedC *FloatHist
 		return c, counterResetCollision, nhcbBoundsReconciled, nil
 	}
 
-	otherC := other.newCompensationHistogram()
-
 	var (
 		hNegativeSpans        = h.NegativeSpans
 		hNegativeBuckets      = h.NegativeBuckets
 		otherNegativeSpans    = other.NegativeSpans
 		otherNegativeBuckets  = other.NegativeBuckets
 		cNegativeBuckets      = c.NegativeBuckets
-		otherCPositiveBuckets = otherC.PositiveBuckets
-		otherCNegativeBuckets = otherC.NegativeBuckets
+		otherCPositiveBuckets []float64
+		otherCNegativeBuckets []float64
 	)
 
 	switch {
@@ -492,16 +493,22 @@ func (h *FloatHistogram) KahanAdd(other, c *FloatHistogram) (updatedC *FloatHist
 		h.Schema = other.Schema
 
 	case other.Schema > h.Schema:
-		otherPositiveSpans, otherPositiveBuckets, otherCPositiveBuckets = kahanReduceResolution(
-			otherPositiveSpans, otherPositiveBuckets, otherCPositiveBuckets,
-			other.Schema, h.Schema,
-			false,
-		)
-		otherNegativeSpans, otherNegativeBuckets, otherCNegativeBuckets = kahanReduceResolution(
-			otherNegativeSpans, otherNegativeBuckets, otherCNegativeBuckets,
-			other.Schema, h.Schema,
-			false,
-		)
+		if len(otherPositiveBuckets) > 0 {
+			otherCPositiveBuckets = make([]float64, len(otherPositiveBuckets))
+			otherPositiveSpans, otherPositiveBuckets, otherCPositiveBuckets = kahanReduceResolution(
+				otherPositiveSpans, otherPositiveBuckets, otherCPositiveBuckets,
+				other.Schema, h.Schema,
+				false,
+			)
+		}
+		if len(otherNegativeBuckets) > 0 {
+			otherCNegativeBuckets = make([]float64, len(otherNegativeBuckets))
+			otherNegativeSpans, otherNegativeBuckets, otherCNegativeBuckets = kahanReduceResolution(
+				otherNegativeSpans, otherNegativeBuckets, otherCNegativeBuckets,
+				other.Schema, h.Schema,
+				false,
+			)
+		}
 	}
 
 	h.PositiveSpans, h.PositiveBuckets, c.PositiveBuckets = kahanAddBuckets(
@@ -561,7 +568,8 @@ func (h *FloatHistogram) Sub(other *FloatHistogram) (res *FloatHistogram, counte
 				true,
 				hPositiveSpans, hPositiveBuckets, h.CustomValues,
 				otherPositiveSpans, otherPositiveBuckets, other.CustomValues,
-				nil, intersectedBounds)
+				nil, intersectedBounds,
+			)
 			h.CustomValues = intersectedBounds
 		}
 		return h, counterResetCollision, nhcbBoundsReconciled, nil
@@ -817,6 +825,7 @@ func detectReset(currIt, prevIt *floatBucketIterator) bool {
 			if !prevIt.Next() {
 				return false
 			}
+			prevBucket = prevIt.strippedAt()
 		}
 	}
 	currBucket := currIt.strippedAt()
@@ -836,6 +845,7 @@ func detectReset(currIt, prevIt *floatBucketIterator) bool {
 					if !prevIt.Next() {
 						return false
 					}
+					prevBucket = prevIt.strippedAt()
 				}
 			}
 			currBucket = currIt.strippedAt()
@@ -1600,7 +1610,9 @@ func kahanAddBuckets(
 				} else if spansA[0].Offset == indexB {
 					// Just add to first bucket.
 					bucketsA[0], compensationBucketsA[0] = kahansum.Inc(bucketB, bucketsA[0], compensationBucketsA[0])
-					bucketsA[0], compensationBucketsA[0] = kahansum.Inc(compensationBucketB, bucketsA[0], compensationBucketsA[0])
+					if compensationBucketB != 0 {
+						bucketsA[0], compensationBucketsA[0] = kahansum.Inc(compensationBucketB, bucketsA[0], compensationBucketsA[0])
+					}
 					goto nextLoop
 				}
 				iSpan, iBucket, iInSpan = 0, 0, 0
@@ -1614,7 +1626,9 @@ func kahanAddBuckets(
 					iBucket += int(deltaIndex)
 					iInSpan += deltaIndex
 					bucketsA[iBucket], compensationBucketsA[iBucket] = kahansum.Inc(bucketB, bucketsA[iBucket], compensationBucketsA[iBucket])
-					bucketsA[iBucket], compensationBucketsA[iBucket] = kahansum.Inc(compensationBucketB, bucketsA[iBucket], compensationBucketsA[iBucket])
+					if compensationBucketB != 0 {
+						bucketsA[iBucket], compensationBucketsA[iBucket] = kahansum.Inc(compensationBucketB, bucketsA[iBucket], compensationBucketsA[iBucket])
+					}
 					break
 				}
 				deltaIndex -= remainingInSpan
@@ -2109,4 +2123,251 @@ func (h *FloatHistogram) HasOverflow() bool {
 		}
 	}
 	return false
+}
+
+// TrimBuckets trims native histogram buckets in place, modifying the receiver
+// and returning it (to allow call chaining). Because it mutates the receiver
+// (and compacts its bucket and span slices), callers that must preserve the
+// original histogram have to pass a copy, e.g.
+// h.Copy().TrimBuckets(rhs, isUpperTrim). This matches the in-place convention
+// of the other FloatHistogram arithmetic methods (Add, Sub, Mul, Div).
+func (h *FloatHistogram) TrimBuckets(rhs float64, isUpperTrim bool) *FloatHistogram {
+	var (
+		updatedCount, updatedSum float64
+		trimmedBuckets           bool
+		isCustomBucket           = h.UsesCustomBuckets()
+		hasPositive, hasNegative bool
+	)
+
+	// Iterators are consumed inline, not via a helper taking a BucketIterator, so they stay on the stack instead of escaping to the heap.
+	for i, iter := 0, h.PositiveBucketIterator(); iter.Next(); i++ {
+		bucket := iter.At()
+		if bucket.Count == 0 {
+			continue
+		}
+		hasPositive = true
+
+		keepCount, bucketMidpoint := trimBucket(bucket, rhs, isUpperTrim, true, isCustomBucket)
+		updatedCount += keepCount
+		updatedSum += bucketMidpoint * keepCount
+		if h.PositiveBuckets[i] != keepCount {
+			h.PositiveBuckets[i] = keepCount
+			trimmedBuckets = true
+		}
+	}
+
+	for i, iter := 0, h.NegativeBucketIterator(); iter.Next(); i++ {
+		bucket := iter.At()
+		if bucket.Count == 0 {
+			continue
+		}
+		hasNegative = true
+
+		keepCount, bucketMidpoint := trimBucket(bucket, rhs, isUpperTrim, false, isCustomBucket)
+		updatedCount += keepCount
+		updatedSum += bucketMidpoint * keepCount
+		if h.NegativeBuckets[i] != keepCount {
+			h.NegativeBuckets[i] = keepCount
+			trimmedBuckets = true
+		}
+	}
+
+	// Handle the zero count bucket.
+	if h.ZeroCount > 0 {
+		keepCount, bucketMidpoint := computeZeroBucketTrim(h.ZeroBucket(), rhs, hasNegative, hasPositive, isUpperTrim)
+
+		if h.ZeroCount != keepCount {
+			h.ZeroCount = keepCount
+			trimmedBuckets = true
+		}
+		updatedSum += bucketMidpoint * keepCount
+		updatedCount += keepCount
+	}
+
+	if trimmedBuckets {
+		// Only update the totals in case some bucket(s) were fully (or partially) trimmed.
+		h.Count = updatedCount
+		h.Sum = updatedSum
+
+		h.Compact(0)
+	}
+
+	return h
+}
+
+// trimBucket returns the portion of b's count to keep against trim point rhs (isUpperTrim keeps values below rhs, else above) and the midpoint for the retained sum.
+func trimBucket(b Bucket[float64], rhs float64, isUpperTrim, isPositive, isCustomBucket bool) (keepCount, bucketMidpoint float64) {
+	var keepAll, containsTrimPoint bool
+
+	if isUpperTrim {
+		keepAll = b.Upper <= rhs
+		containsTrimPoint = b.Lower < rhs
+	} else {
+		keepAll = b.Lower >= rhs
+		containsTrimPoint = b.Upper > rhs
+	}
+
+	switch {
+	case keepAll:
+		// Bucket is entirely on the kept side of the trim point - keep all.
+		return b.Count, computeMidpoint(b.Lower, b.Upper, isPositive, isCustomBucket)
+
+	case containsTrimPoint:
+		// Bucket contains the trim point - interpolate.
+		return computeBucketTrim(b, rhs, isUpperTrim, isPositive, isCustomBucket)
+
+	default:
+		// Bucket is entirely on the discarded side of the trim point.
+		return 0, 0
+	}
+}
+
+func handleInfinityBuckets(isUpperTrim bool, b Bucket[float64], rhs float64) (underCount, bucketMidpoint float64) {
+	zeroIfInf := func(x float64) float64 {
+		if math.IsInf(x, 0) {
+			return 0
+		}
+		return x
+	}
+
+	// Case 1: Bucket with lower bound -Inf.
+	if math.IsInf(b.Lower, -1) {
+		// TRIM_UPPER (</) - remove values greater than rhs
+		if isUpperTrim {
+			if rhs >= b.Upper {
+				// As the rhs is greater than the upper bound, we keep the entire current bucket.
+				return b.Count, 0
+			}
+			if rhs > 0 && b.Upper > 0 && !math.IsInf(b.Upper, 1) {
+				// If upper is finite and positive, we treat lower as 0 (despite it de facto being -Inf).
+				// This is only possible with NHCB, so we can always use linear interpolation.
+				return b.Count * rhs / b.Upper, rhs / 2
+			}
+			if b.Upper <= 0 {
+				return b.Count, rhs
+			}
+			// Otherwise, we are targeting a valid trim, but as we don't know the exact distribution of values that belongs to an infinite bucket, we need to remove the entire bucket.
+			return 0, zeroIfInf(b.Upper)
+		}
+		// TRIM_LOWER (>/) - remove values less than rhs
+		if rhs <= b.Lower {
+			// Impossible to happen because the lower bound is -Inf. Returning the entire current bucket.
+			return b.Count, 0
+		}
+		if rhs >= 0 && b.Upper > rhs && !math.IsInf(b.Upper, 1) {
+			// If upper is finite and positive, we treat lower as 0 (despite it de facto being -Inf).
+			// This is only possible with NHCB, so we can always use linear interpolation.
+			return b.Count * (1 - rhs/b.Upper), (rhs + b.Upper) / 2
+		}
+		// Otherwise, we are targeting a valid trim, but as we don't know the exact distribution of values that belongs to an infinite bucket, we need to remove the entire bucket.
+		return 0, zeroIfInf(b.Upper)
+	}
+
+	// Case 2: Bucket with upper bound +Inf.
+	if math.IsInf(b.Upper, 1) {
+		if isUpperTrim {
+			// TRIM_UPPER (</) - remove values greater than rhs.
+			// We don't care about lower here, because:
+			//   when rhs >= lower and the bucket extends to +Inf, some values in this bucket could be > rhs, so we conservatively remove the entire bucket;
+			//   when rhs < lower, all values in this bucket are >= lower > rhs, so all values should be removed.
+			return 0, zeroIfInf(b.Lower)
+		}
+		// TRIM_LOWER (>/) - remove values less than rhs.
+		if rhs >= b.Lower {
+			return b.Count, rhs
+		}
+		// lower < rhs: we are inside the infinity bucket, but as we don't know the exact distribution of values, we conservatively remove the entire bucket.
+		return 0, zeroIfInf(b.Lower)
+	}
+
+	panic(fmt.Errorf("one of the bounds must be infinite for handleInfinityBuckets, got %v", b))
+}
+
+// computeSplit calculates the portion of the bucket's count <= rhs (trim point).
+func computeSplit(b Bucket[float64], rhs float64, isLinear bool) float64 {
+	if rhs <= b.Lower {
+		return 0
+	}
+	if rhs >= b.Upper {
+		return b.Count
+	}
+	return b.Count * b.FractionBelow(rhs, isLinear)
+}
+
+func computeZeroBucketTrim(zeroBucket Bucket[float64], rhs float64, hasNegative, hasPositive, isUpperTrim bool) (float64, float64) {
+	var (
+		lower = zeroBucket.Lower
+		upper = zeroBucket.Upper
+	)
+	if hasNegative && !hasPositive {
+		upper = 0
+	}
+	if hasPositive && !hasNegative {
+		lower = 0
+	}
+
+	var fraction, midpoint float64
+
+	if isUpperTrim {
+		if rhs <= lower {
+			return 0, 0
+		}
+		if rhs >= upper {
+			return zeroBucket.Count, (lower + upper) / 2
+		}
+
+		fraction = (rhs - lower) / (upper - lower)
+		midpoint = (lower + rhs) / 2
+	} else { // lower trim
+		if rhs <= lower {
+			return zeroBucket.Count, (lower + upper) / 2
+		}
+		if rhs >= upper {
+			return 0, 0
+		}
+
+		fraction = (upper - rhs) / (upper - lower)
+		midpoint = (rhs + upper) / 2
+	}
+
+	return zeroBucket.Count * fraction, midpoint
+}
+
+func computeBucketTrim(b Bucket[float64], rhs float64, isUpperTrim, isPositive, isCustomBucket bool) (float64, float64) {
+	if math.IsInf(b.Lower, -1) || math.IsInf(b.Upper, 1) {
+		return handleInfinityBuckets(isUpperTrim, b, rhs)
+	}
+
+	underCount := computeSplit(b, rhs, isCustomBucket)
+
+	if isUpperTrim {
+		return underCount, computeMidpoint(b.Lower, rhs, isPositive, isCustomBucket)
+	}
+
+	return b.Count - underCount, computeMidpoint(rhs, b.Upper, isPositive, isCustomBucket)
+}
+
+func computeMidpoint(survivingIntervalLowerBound, survivingIntervalUpperBound float64, isPositive, isLinear bool) float64 {
+	if math.IsInf(survivingIntervalLowerBound, 0) {
+		if math.IsInf(survivingIntervalUpperBound, 0) {
+			return 0
+		}
+		if survivingIntervalUpperBound > 0 {
+			return survivingIntervalUpperBound / 2
+		}
+		return survivingIntervalUpperBound
+	} else if math.IsInf(survivingIntervalUpperBound, 0) {
+		return survivingIntervalLowerBound
+	}
+
+	if isLinear {
+		return (survivingIntervalLowerBound + survivingIntervalUpperBound) / 2
+	}
+
+	geoMean := math.Sqrt(math.Abs(survivingIntervalLowerBound * survivingIntervalUpperBound))
+
+	if isPositive {
+		return geoMean
+	}
+	return -geoMean
 }
